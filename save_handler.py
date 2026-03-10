@@ -2220,3 +2220,75 @@ class SaveHandler:
                 count += 1
         self.modified = True
         return count
+
+    def clone_dlc_slot(self, src_slot: int, dst_slot: int) -> None:
+        """Copy a DLC slot's raw data to another slot, recomputing CRC."""
+        if not 0 <= src_slot < DLC_SLOT_COUNT:
+            raise ValueError(f"Source slot must be 0-255, got {src_slot}")
+        if not 0 <= dst_slot < DLC_SLOT_COUNT:
+            raise ValueError(f"Destination slot must be 0-255, got {dst_slot}")
+        src_off = self._dlc_slot_offset(src_slot)
+        raw = bytes(self.data[src_off:src_off + DLC_SLOT_SIZE])
+        self.write_dlc_slot(dst_slot, raw)
+
+    def read_dlc_slot_raw(self, slot: int) -> bytes:
+        """Return the raw 0x2000 bytes of a DLC slot."""
+        off = self._dlc_slot_offset(slot)
+        return bytes(self.data[off:off + DLC_SLOT_SIZE])
+
+    def create_dlc_entry(
+        self,
+        slot: int,
+        name: str,
+        base_id: int,
+        price: int = 0,
+        class_idx: int = 0,
+        sub_id: int = 0x0000,
+        drop_model: int = 16,
+        template_slot: int = -1,
+    ) -> None:
+        """Create a new HDLC (Hacked DLC) entry in the given slot.
+
+        If *template_slot* is >= 0 and valid, its ASH0 data and extended
+        metadata are copied into the new entry (visual clone with new identity).
+        Otherwise, the slot is created with an empty ASH0 region.
+        """
+        if not 0 <= slot < DLC_SLOT_COUNT:
+            raise ValueError(f"Slot must be 0-255, got {slot}")
+        if not 0 <= base_id <= 0xFFFF:
+            raise ValueError(f"Base ID must be 0-65535, got {base_id}")
+        price = max(0, min(price, 0xFFFFFFFF))
+        class_idx = class_idx & 0xFF
+        sub_id = sub_id & 0xFFFF
+        drop_model = drop_model & 0xFF
+
+        buf = bytearray(DLC_SLOT_SIZE)
+
+        # Copy template ASH0 + extended metadata if provided
+        if 0 <= template_slot < DLC_SLOT_COUNT and self.is_dlc_slot_valid(template_slot):
+            src_off = self._dlc_slot_offset(template_slot)
+            # Copy extended metadata (+0x169, 35 bytes)
+            buf[0x169:0x169 + 35] = self.data[src_off + 0x169:src_off + 0x169 + 35]
+            # Copy ASH0 data (+0x18C, 0x1E70 bytes)
+            buf[0x18C:0x18C + DLC_ASH0_SIZE] = self.data[
+                src_off + 0x18C:src_off + 0x18C + DLC_ASH0_SIZE
+            ]
+
+        # BITM header
+        buf[0:4] = b"BITM"
+        struct.pack_into(">I", buf, 0x04, price & 0xFFFFFFFF)
+        struct.pack_into(">H", buf, 0x08, base_id & 0xFFFF)
+        struct.pack_into(">H", buf, 0x0A, sub_id & 0xFFFF)
+        struct.pack_into(">H", buf, 0x10, DLC_VALID_MARKER)
+        buf[0x166] = class_idx & 0xFF
+        buf[0x167] = slot & 0xFF
+        buf[0x168] = drop_model & 0xFF
+
+        # Write name to all 10 language slots
+        encoded = name[:16].encode("utf-16-be")
+        padded = encoded.ljust(self._DLC_NAME_SIZE, b"\x00")[:self._DLC_NAME_SIZE]
+        for lang_idx in range(10):
+            off = self._DLC_NAME_OFF + lang_idx * self._DLC_NAME_SIZE
+            buf[off:off + self._DLC_NAME_SIZE] = padded
+
+        self.write_dlc_slot(slot, bytes(buf))
