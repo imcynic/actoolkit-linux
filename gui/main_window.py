@@ -369,6 +369,13 @@ class MainWindow(QMainWindow):
             self.grass_style_actions.append(action)
         self.grass_style_actions[0].setChecked(True)
 
+        # --- Tools ---
+        tools_menu = menubar.addMenu("&Tools")
+        assert tools_menu is not None
+
+        self.action_slot_analyzer = QAction("Slot &Analyzer...", self)
+        tools_menu.addAction(self.action_slot_analyzer)
+
         # --- Help ---
         help_menu = menubar.addMenu("&Help")
         assert help_menu is not None
@@ -466,6 +473,9 @@ class MainWindow(QMainWindow):
         self.gate_style_group.triggered.connect(self._on_gate_style_changed)
         self.grass_style_group.triggered.connect(self._on_grass_style_changed)
 
+        # Tools menu
+        self.action_slot_analyzer.triggered.connect(self._on_slot_analyzer)
+
         # Help menu
         self.action_about.triggered.connect(self._on_about)
 
@@ -508,6 +518,7 @@ class MainWindow(QMainWindow):
         self.action_clear_sold_out.setEnabled(enabled)
         self.action_fill_catalog.setEnabled(enabled)
         self.action_fill_music.setEnabled(enabled)
+        self.action_slot_analyzer.setEnabled(enabled)
 
         for action in self.nook_style_actions:
             action.setEnabled(enabled)
@@ -1098,6 +1109,18 @@ class MainWindow(QMainWindow):
         dlg = HouseEditorDialog(self.save_handler, imode=room_idx, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._mark_modified()
+
+    # ------------------------------------------------------------------
+    # Tools
+    # ------------------------------------------------------------------
+
+    @pyqtSlot()
+    def _on_slot_analyzer(self) -> None:
+        if not self.save_handler or not self.save_handler.filepath:
+            return
+        from gui.slot_analyzer_dialog import SlotAnalyzerDialog
+        dlg = SlotAnalyzerDialog(self.save_handler, parent=self)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     # Help
