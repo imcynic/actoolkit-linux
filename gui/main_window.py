@@ -511,24 +511,55 @@ class MainWindow(QMainWindow):
         for action in self.grass_style_actions:
             action.setEnabled(enabled)
 
+    def _game_display_name(self) -> str:
+        """Return a human-readable name for the loaded game type."""
+        if self.save_handler and self.save_handler.profile:
+            return self.save_handler.profile.display_name
+        return "Animal Crossing: City Folk"
+
     def _update_title_bar(self) -> None:
-        base = "ACToolkit - Animal Crossing: City Folk Save Editor"
+        base = "ACToolkit - Animal Crossing Save Editor"
         if self.save_handler and self.save_handler.filepath:
             name = Path(self.save_handler.filepath).name
+            game = self._game_display_name()
             deluxe = " [Deluxe]" if getattr(self, "_is_deluxe", False) else ""
             mod = " *" if self.save_handler.modified else ""
-            self.setWindowTitle(f"{base} - {name}{deluxe}{mod}")
+            self.setWindowTitle(f"{base} - {name} ({game}){deluxe}{mod}")
         else:
             self.setWindowTitle(base)
 
     def _update_status_bar(self) -> None:
         if self.save_handler and self.save_handler.filepath:
-            deluxe = " (Deluxe Edition)" if getattr(self, "_is_deluxe", False) else ""
-            self.file_label.setText(f"{self.save_handler.filepath}{deluxe}")
+            game = self._game_display_name()
+            deluxe = " [Deluxe]" if getattr(self, "_is_deluxe", False) else ""
+            self.file_label.setText(f"{self.save_handler.filepath} ({game}{deluxe})")
             self.mod_label.setText("Modified" if self.save_handler.modified else "")
         else:
             self.file_label.setText("No file loaded")
             self.mod_label.setText("")
+
+    def _apply_game_type_restrictions(self) -> None:
+        """Disable menu items that don't apply to the loaded game type."""
+        if not self.save_handler:
+            return
+        is_gc = self.save_handler.is_gc
+
+        # GC doesn't have these features
+        self.action_dlc_editor.setEnabled(not is_gc)
+        self.action_museum_editor.setEnabled(not is_gc)
+        self.action_letter_viewer.setEnabled(not is_gc)
+        self.action_pattern_editor.setEnabled(not is_gc)  # TODO: add GC pattern support
+        self.action_restore_grass.setEnabled(not is_gc)
+        self.action_remove_grass.setEnabled(not is_gc)
+        self.action_fill_catalog.setEnabled(not is_gc)
+        self.action_fill_music.setEnabled(not is_gc)
+
+        # Buildings are different on GC
+        # self.action_building_editor.setEnabled(not is_gc)  # TODO: adapt
+
+        # Nook's style is different on GC
+        for action in self.nook_style_actions:
+            action.setEnabled(not is_gc)
 
     def _merge_deluxe_items(self) -> None:
         """Merge Deluxe Edition items into the global items_db when a Deluxe save is detected."""
@@ -604,7 +635,7 @@ class MainWindow(QMainWindow):
             self,
             "Open Save File",
             "",
-            "ACCF Save Files (*.dat *.bin *.sav);;All Files (*)",
+            "AC Save Files (*.dat *.bin *.sav *.gci *.gcs);;All Files (*)",
         )
         if not path:
             return
@@ -617,18 +648,19 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to open:\n{path}")
             return
 
-        # CRC check
+        # Checksum verification
         crc_errors: list[str] = self.save_handler.check_all_crc()
         if crc_errors:
             detail = "\n".join(crc_errors)
             QMessageBox.warning(
                 self,
-                "CRC Warning",
-                f"The following CRC checks failed:\n\n{detail}\n\n"
+                "Checksum Warning",
+                f"The following checksum checks failed:\n\n{detail}\n\n"
                 "The file may be corrupted. Proceed with caution.",
             )
 
         self._set_file_dependent_state(True)
+        self._apply_game_type_restrictions()
         self._enable_player_menus()
         self._sync_settings_menus()
         self._refresh_player_info()
@@ -636,11 +668,18 @@ class MainWindow(QMainWindow):
         # Detect Deluxe save and merge item database
         self._is_deluxe = False
         try:
-            from deluxe_items import is_deluxe_save
-            self._is_deluxe = is_deluxe_save(self.save_handler)
+            if self.save_handler.is_accf:
+                from deluxe_items import is_deluxe_save
+                self._is_deluxe = is_deluxe_save(self.save_handler)
+            else:
+                # GC Deluxe is detected in SaveHandler._detect_gc_deluxe()
+                from game_profiles import GameType
+                self._is_deluxe = self.save_handler.game_type in (
+                    GameType.GC_DELUXE, GameType.WII_ACCF_DELUXE,
+                )
         except Exception:
             pass
-        if self._is_deluxe:
+        if self._is_deluxe and self.save_handler.is_accf:
             self._merge_deluxe_items()
 
         self._update_title_bar()

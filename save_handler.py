@@ -1,13 +1,13 @@
 """
-save_handler.py - Core binary I/O handler for Animal Crossing: City Folk (Wii) save files.
+save_handler.py - Core binary I/O handler for Animal Crossing save files.
 
-Handles RVFOREST.DAT files (exactly 0x40F340 = 4,256,576 bytes).
-All multi-byte values are big-endian (PowerPC / Wii byte order).
+Supports:
+  - Animal Crossing: City Folk (Wii) - RVFOREST.DAT (0x40F340 bytes)
+  - Animal Crossing (GameCube) - .gci (0x72040), .gcs (0x72150), raw (0x200000)
+  - Animal Crossing Deluxe (GameCube mod) - same formats as vanilla GC
 
-CRC32 implementation matches the original Delphi ACToolkit exactly:
-  - Standard IEEE 802.3 CRC32 lookup table
-  - Four distinct CRC regions (player, town, buildings, extended)
-  - CRCs are byte-swapped before writing (native little-endian -> big-endian storage)
+All multi-byte values are big-endian (PowerPC byte order).
+Game type is auto-detected from file size and header.
 """
 
 from __future__ import annotations
@@ -15,6 +15,12 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 from typing import Optional
+
+from game_profiles import (
+    GameType, ContainerType, StringEncoding, ChecksumType,
+    GameProfile, detect_game_from_file, get_profile_for_game,
+    GC_CONTAINER_OFFSETS,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -117,16 +123,21 @@ def _byte_swap_32(value: int) -> int:
 
 class SaveHandler:
     """
-    Binary handler for RVFOREST.DAT (Animal Crossing: City Folk / Wii).
+    Binary handler for Animal Crossing save files (GC and Wii).
 
     All offsets and multi-byte values follow PowerPC big-endian convention.
     Data is held in a mutable bytearray for in-place editing.
+    Game type is auto-detected on open().
     """
 
     def __init__(self) -> None:
         self.data: bytearray = bytearray()
         self._filepath: Optional[Path] = None
         self.modified: bool = False
+        self.game_type: GameType = GameType.WII_ACCF
+        self.container_type: ContainerType = ContainerType.RAW
+        self.profile: Optional[GameProfile] = None
+        self._save_data_start: int = 0  # Offset to save payload within file
 
     # -- properties ---------------------------------------------------------
 
@@ -135,36 +146,97 @@ class SaveHandler:
         """Path to the currently-loaded save file (None if nothing loaded)."""
         return self._filepath
 
+    @property
+    def is_gc(self) -> bool:
+        """True if the loaded save is a GameCube game."""
+        return self.game_type in (GameType.GC_VANILLA, GameType.GC_DELUXE)
+
+    @property
+    def is_accf(self) -> bool:
+        """True if the loaded save is Animal Crossing: City Folk."""
+        return self.game_type in (GameType.WII_ACCF, GameType.WII_ACCF_DELUXE)
+
     # -- file I/O -----------------------------------------------------------
 
     def open(self, path: str | Path) -> bool:
         """
-        Read an entire RVFOREST.DAT into ``self.data``.
+        Read a save file and auto-detect its game type.
 
-        Returns ``True`` on success, ``False`` on failure (wrong size).
-        Raises ``FileNotFoundError`` / ``PermissionError`` on OS errors.
+        Supports ACCF (.dat), GC (.gci, .gcs, raw).
+        Returns ``True`` on success, ``False`` on failure.
         """
         path = Path(path)
         raw = path.read_bytes()
-        if len(raw) != SAVE_SIZE:
-            return False
+
+        # Try auto-detection
+        try:
+            game_type, container_type, save_start = detect_game_from_file(raw)
+        except ValueError:
+            # Fall back to ACCF size check for backwards compatibility
+            if len(raw) == SAVE_SIZE:
+                game_type = GameType.WII_ACCF
+                container_type = ContainerType.RAW
+                save_start = 0
+            else:
+                return False
+
         self.data = bytearray(raw)
         self._filepath = path
         self.modified = False
+        self.game_type = game_type
+        self.container_type = container_type
+        self._save_data_start = save_start
+        self.profile = get_profile_for_game(game_type)
+        self.profile.save_data_start = save_start
+
+        # Detect GC Deluxe
+        if self.is_gc:
+            self._detect_gc_deluxe()
+
         return True
+
+    def _detect_gc_deluxe(self) -> None:
+        """Check if a GC save is the Deluxe mod edition."""
+        try:
+            # Check ordinance_flags at save+0x241A8
+            off = self._save_data_start + 0x241A8
+            if off < len(self.data):
+                flags = self.data[off]
+                if flags & 0xF0:  # Upper nibble has ordinance bits
+                    self.game_type = GameType.GC_DELUXE
+                    self.profile.game_type = GameType.GC_DELUXE
+                    self.profile.display_name = "Animal Crossing Deluxe (GameCube)"
+                    self.profile.stalk_pattern_max = 4  # Deluxe has 5 patterns
+                    return
+            # Check stalk market trend type at save+0x2048E
+            off = self._save_data_start + 0x2048E
+            if off + 1 < len(self.data):
+                trend = self.read_u16(off)
+                if trend >= 3:
+                    self.game_type = GameType.GC_DELUXE
+                    self.profile.game_type = GameType.GC_DELUXE
+                    self.profile.display_name = "Animal Crossing Deluxe (GameCube)"
+                    self.profile.stalk_pattern_max = 4
+        except Exception:
+            pass
 
     def save(self, path: str | Path | None = None) -> None:
         """
-        Update all CRCs, then write the save to *path*.
+        Update all checksums, then write the save to *path*.
 
         If *path* is ``None``, overwrite the original file.
         """
-        if len(self.data) != SAVE_SIZE:
-            raise RuntimeError(
-                f"Data size mismatch: expected {SAVE_SIZE} bytes, "
-                f"got {len(self.data)}. Refusing to write corrupt save."
-            )
+        expected_size = len(self.data)  # Preserve original file size
         self.update_all_crc()
+
+        # For GC saves, duplicate the save data
+        if self.is_gc and self.profile and self.profile.is_duplicated:
+            start = self._save_data_start
+            size = self.profile.save_payload_size
+            end = start + size
+            if end + size <= len(self.data):
+                self.data[end:end + size] = self.data[start:end]
+
         target = Path(path) if path is not None else self._filepath
         if target is None:
             raise RuntimeError("No file path set; use save_as() or open() first")
@@ -173,7 +245,7 @@ class SaveHandler:
         self.modified = False
 
     def save_as(self, path: str | Path) -> None:
-        """Update all CRCs and write to a new path."""
+        """Update all checksums and write to a new path."""
         self.save(path)
 
     # -- byte-level helpers (big-endian) ------------------------------------
@@ -215,15 +287,83 @@ class SaveHandler:
         struct.pack_into(">I", self.data, offset, val & 0xFFFFFFFF)
         self.modified = True
 
-    # -- string helpers (big-endian UTF-16) ---------------------------------
+    # -- string helpers -----------------------------------------------------
+
+    # GC Animal Crossing custom character encoding table
+    # Maps byte values to Unicode characters (subset)
+    _GC_CHAR_TABLE = (
+        # 0x00-0x09: digits
+        "0123456789"
+        # 0x0A-0x23: uppercase A-Z
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        # 0x24-0x3D: lowercase a-z
+        "abcdefghijklmnopqrstuvwxyz"
+    )
+    # Special characters starting at 0x3E
+    _GC_SPECIAL = {
+        0x3E: " ", 0x3F: "!", 0x40: '"', 0x41: "#", 0x42: "$",
+        0x43: "%", 0x44: "&", 0x45: "'", 0x46: "(", 0x47: ")",
+        0x48: "*", 0x49: "+", 0x4A: ",", 0x4B: "-", 0x4C: ".",
+        0x4D: "/", 0x4E: ":", 0x4F: ";", 0x50: "<", 0x51: "=",
+        0x52: ">", 0x53: "?", 0x54: "@", 0x55: "[", 0x56: "\\",
+        0x57: "]", 0x58: "^", 0x59: "_", 0x5A: "`", 0x5B: "{",
+        0x5C: "|", 0x5D: "}", 0x5E: "~",
+        0x80: " ",  # Non-breaking space / terminator variant
+    }
+    # Build reverse table for encoding
+    _GC_REVERSE: dict[str, int] = {}
+
+    @classmethod
+    def _build_gc_reverse(cls) -> dict[str, int]:
+        if cls._GC_REVERSE:
+            return cls._GC_REVERSE
+        for i, ch in enumerate(cls._GC_CHAR_TABLE):
+            cls._GC_REVERSE[ch] = i
+        for byte_val, ch in cls._GC_SPECIAL.items():
+            if ch not in cls._GC_REVERSE:  # Don't overwrite primary mapping
+                cls._GC_REVERSE[ch] = byte_val
+        return cls._GC_REVERSE
+
+    def read_gc_string(self, offset: int, max_chars: int = 8) -> str:
+        """Read a GC-encoded string (1 byte per char, custom encoding)."""
+        self._check_offset(offset, max_chars)
+        chars: list[str] = []
+        for i in range(max_chars):
+            b = self.data[offset + i]
+            if b == 0 or b == 0xFF:
+                break
+            if b < len(self._GC_CHAR_TABLE):
+                chars.append(self._GC_CHAR_TABLE[b])
+            elif b in self._GC_SPECIAL:
+                chars.append(self._GC_SPECIAL[b])
+            else:
+                chars.append(f"\\x{b:02X}")
+        return "".join(chars)
+
+    def write_gc_string(self, offset: int, text: str, max_chars: int = 8) -> None:
+        """Write a GC-encoded string (1 byte per char, custom encoding)."""
+        self._check_offset(offset, max_chars)
+        reverse = self._build_gc_reverse()
+        for i in range(max_chars):
+            if i < len(text):
+                ch = text[i]
+                b = reverse.get(ch, 0x3E)  # Default to space
+            else:
+                b = 0  # Null terminator / padding
+            self.data[offset + i] = b
+        self.modified = True
 
     def read_string(self, offset: int, max_chars: int = 8) -> str:
         """
-        Read a big-endian UTF-16 string starting at *offset*.
+        Read a string at *offset*, using the correct encoding for the
+        loaded game type.
 
-        Each character is stored as a 2-byte big-endian value.  Reading stops
-        at a null character (0x0000) or after *max_chars* characters.
+        GC: 1 byte per char, custom encoding.
+        ACCF: 2 bytes per char, UTF-16 BE.
         """
+        if self.is_gc:
+            return self.read_gc_string(offset, max_chars)
+        # ACCF: UTF-16 BE
         chars: list[str] = []
         for i in range(max_chars):
             code = struct.unpack_from(">H", self.data, offset + i * 2)[0]
@@ -234,20 +374,43 @@ class SaveHandler:
 
     def write_string(self, offset: int, text: str, max_chars: int = 8) -> None:
         """
-        Write a big-endian UTF-16 string at *offset*, padded with null chars.
+        Write a string at *offset*, using the correct encoding for the
+        loaded game type.
         """
+        if self.is_gc:
+            return self.write_gc_string(offset, max_chars=max_chars, text=text)
+        # ACCF: UTF-16 BE
         for i in range(max_chars):
             code = ord(text[i]) if i < len(text) else 0
             struct.pack_into(">H", self.data, offset + i * 2, code)
         self.modified = True
 
     # ======================================================================
-    # CRC32
+    # Checksum helpers
     # ======================================================================
 
     def _compute_crc(self, start: int, end: int, seed: int) -> int:
         """Return the CRC32 of data[start:end] with *seed*."""
         return _crc32_stream(self.data, start, end, seed)
+
+    def _compute_gc_checksum(self) -> int:
+        """
+        Compute the GC uint16 additive checksum.
+
+        Iterates over the save payload in 2-byte steps, summing all u16 words
+        (skipping the checksum at offset 0x12).  Returns the negation.
+        """
+        start = self._save_data_start
+        size = self.profile.save_payload_size if self.profile else 0x26000
+        cksum_off = start + 0x12  # Checksum location within save data
+        total = 0
+        for i in range(0, size, 2):
+            off = start + i
+            if off == cksum_off:
+                continue  # Skip the checksum itself
+            word = (self.data[off] << 8) | self.data[off + 1]
+            total = (total + word) & 0xFFFF
+        return (-total) & 0xFFFF
 
     def _write_crc(self, crc_offset: int, crc_value: int) -> None:
         """Write *crc_value* at *crc_offset* as big-endian u32.
@@ -327,33 +490,47 @@ class SaveHandler:
         """
         Compute the DLC region CRC.
 
-        Checksum at 0x20F320, covers 0x20F324 to 0x40F324.
+        Checksum at 0x20F320, covers 0x20F324 to end of file.
         Seed is 0xFBDFEFE7 (non-standard).
         """
-        end = DLC_ITEMS_OFFSET + DLC_SLOT_COUNT * DLC_SLOT_SIZE
-        crc = self._compute_crc(DLC_ITEMS_OFFSET, end, CRC_SEED_DLC)
+        crc = self._compute_crc(DLC_ITEMS_OFFSET, len(self.data), CRC_SEED_DLC)
         if write:
             self._write_crc(DLC_CRC_OFFSET, crc)
         return crc
 
-    # -- aggregate CRC helpers ----------------------------------------------
+    # -- aggregate checksum helpers -----------------------------------------
 
     def update_all_crc(self) -> None:
-        """Recompute and write all CRC regions (4 players + town/buildings/ext + DLC)."""
-        for p in range(PLAYER_COUNT):
-            self.update_crc_a(p, write=True)
-        self.update_crc_b(write=True)
-        self.update_crc_c(write=True)
-        self.update_crc_d(write=True)
-        self.update_crc_dlc(write=True)
+        """Recompute and write all checksum regions."""
+        if self.is_gc:
+            self._update_gc_checksum()
+        else:
+            # ACCF CRC32 regions
+            for p in range(PLAYER_COUNT):
+                self.update_crc_a(p, write=True)
+            self.update_crc_b(write=True)
+            self.update_crc_c(write=True)
+            self.update_crc_d(write=True)
+            self.update_crc_dlc(write=True)
+
+    def _update_gc_checksum(self) -> None:
+        """Compute and write the GC uint16 checksum."""
+        cksum = self._compute_gc_checksum()
+        off = self._save_data_start + 0x12
+        struct.pack_into(">H", self.data, off, cksum)
+        self.modified = True
 
     def check_all_crc(self) -> list[str]:
         """
-        Verify every CRC region.
+        Verify all checksum regions.
 
         Returns a list of human-readable mismatch descriptions.
-        An empty list means all CRCs are valid.
+        An empty list means all checksums are valid.
         """
+        if self.is_gc:
+            return self._check_gc_checksum()
+
+        # ACCF CRC32 checks
         mismatches: list[str] = []
         for p in range(PLAYER_COUNT):
             po = self.player_offset(p)
@@ -393,66 +570,139 @@ class SaveHandler:
             )
         return mismatches
 
+    def _check_gc_checksum(self) -> list[str]:
+        """Verify the GC uint16 checksum."""
+        off = self._save_data_start + 0x12
+        stored = struct.unpack_from(">H", self.data, off)[0]
+        computed = self._compute_gc_checksum()
+        if stored != computed:
+            return [f"GC checksum: stored=0x{stored:04X} computed=0x{computed:04X}"]
+        return []
+
     # ======================================================================
     # Player data helpers
     # ======================================================================
 
-    @staticmethod
-    def player_offset(p: int) -> int:
-        """Return the byte offset for player *p* (0-3)."""
+    def _soff(self, rel_offset: int) -> int:
+        """Convert a save-relative offset to an absolute file offset."""
+        return self._save_data_start + rel_offset
+
+    def player_offset(self, p: int) -> int:
+        """Return the absolute byte offset for player *p* (0-3)."""
         if not (0 <= p < PLAYER_COUNT):
             raise ValueError(f"Player index must be 0-3, got {p}")
-        return PLAYER_STRIDE * p
+        if self.profile:
+            return self._soff(self.profile.player_start) + self.profile.player_stride * p
+        return PLAYER_STRIDE * p  # Legacy ACCF fallback
 
     def player_exists(self, p: int) -> bool:
         """
         Return ``True`` if player slot *p* contains valid data.
 
-        An empty/uninitialised slot produces a known CRC sentinel.
+        ACCF: An empty slot produces a known CRC sentinel.
+        GC: Check if player name is non-empty.
         """
+        if self.is_gc:
+            # GC: check if player name starts with a non-null byte
+            po = self.player_offset(p)
+            name_off = po + self.profile.p_name
+            if name_off >= len(self.data):
+                return False
+            return self.data[name_off] != 0
+        # ACCF
         crc = self.update_crc_a(p, write=False)
         return crc != EMPTY_PLAYER_CRC
 
-    # -- wallet / bank / points ---------------------------------------------
+    # -- wallet / bank / points / debt --------------------------------------
 
     def get_wallet(self, p: int) -> int:
-        return self.read_u32(0x1154 + self.player_offset(p))
+        po = self.player_offset(p)
+        if self.profile:
+            return self.read_u32(po + self.profile.p_wallet)
+        return self.read_u32(0x1154 + po)
 
     def set_wallet(self, p: int, val: int) -> None:
-        self.write_u32(0x1154 + self.player_offset(p), min(val, 99999))
+        po = self.player_offset(p)
+        max_val = 99999 if self.is_accf else 99999
+        if self.profile:
+            self.write_u32(po + self.profile.p_wallet, min(val, max_val))
+        else:
+            self.write_u32(0x1154 + po, min(val, max_val))
 
     def get_bank(self, p: int) -> int:
-        return self.read_u32(0x115C + self.player_offset(p))
+        po = self.player_offset(p)
+        if self.profile:
+            return self.read_u32(po + self.profile.p_bank)
+        return self.read_u32(0x115C + po)
 
     def set_bank(self, p: int, val: int) -> None:
-        self.write_u32(0x115C + self.player_offset(p), min(val, 999999999))
+        po = self.player_offset(p)
+        if self.profile:
+            self.write_u32(po + self.profile.p_bank, min(val, 999999999))
+        else:
+            self.write_u32(0x115C + po, min(val, 999999999))
+
+    def get_debt(self, p: int) -> int:
+        """Read Tom Nook's mortgage (GC only). Returns 0 for ACCF."""
+        if self.is_gc and self.profile and self.profile.p_debt:
+            return self.read_u32(self.player_offset(p) + self.profile.p_debt)
+        return 0
+
+    def set_debt(self, p: int, val: int) -> None:
+        """Set Tom Nook's mortgage (GC only)."""
+        if self.is_gc and self.profile and self.profile.p_debt:
+            self.write_u32(self.player_offset(p) + self.profile.p_debt, val)
 
     def get_points(self, p: int) -> int:
-        return self.read_u16(0x7FC0 + self.player_offset(p))
+        if not self.is_accf:
+            return 0  # GC doesn't have HRA points
+        po = self.player_offset(p)
+        return self.read_u16(0x7FC0 + po)
 
     def set_points(self, p: int, val: int) -> None:
-        self.write_u16(0x7FC0 + self.player_offset(p), min(val, 65535))
+        if not self.is_accf:
+            return
+        po = self.player_offset(p)
+        self.write_u16(0x7FC0 + po, min(val, 65535))
 
     # -- name / town info ---------------------------------------------------
 
     def get_player_name(self, p: int) -> str:
-        return self.read_string(0x7EFA + self.player_offset(p), 8)
+        po = self.player_offset(p)
+        if self.profile:
+            return self.read_string(po + self.profile.p_name, self.profile.p_name_max)
+        return self.read_string(0x7EFA + po, 8)
 
-    def get_town_name(self, p: int) -> str:
-        return self.read_string(0x7EE4 + self.player_offset(p), 8)
+    def get_town_name(self, p: int = 0) -> str:
+        if self.is_gc and self.profile and self.profile.town_name_offset:
+            # GC: global town name
+            return self.read_string(self._soff(self.profile.town_name_offset), 8)
+        po = self.player_offset(p)
+        if self.profile:
+            return self.read_string(po + self.profile.p_town_name, self.profile.p_name_max)
+        return self.read_string(0x7EE4 + po, 8)
 
-    def get_town_id(self, p: int) -> int:
-        return self.read_u16(0x7EE2 + self.player_offset(p))
+    def get_town_id(self, p: int = 0) -> int:
+        if self.is_gc and self.profile and self.profile.town_id_offset:
+            return self.read_u16(self._soff(self.profile.town_id_offset))
+        po = self.player_offset(p)
+        return self.read_u16(0x7EE2 + po)
 
     def get_special_byte(self, p: int) -> int:
+        if self.is_gc:
+            return 0  # GC doesn't have this field
         return self.read_u8(0x7EF6 + self.player_offset(p))
 
     # -- donation -----------------------------------------------------------
 
     def get_donation(self) -> int:
+        if self.is_gc:
+            return 0  # GC doesn't have a donation counter
         return self.read_u32(0x5EC7C)
 
     def set_donation(self, val: int) -> None:
+        if self.is_gc:
+            return
         self.write_u32(0x5EC7C, val)
 
     # ======================================================================
@@ -460,36 +710,62 @@ class SaveHandler:
     # ======================================================================
 
     def get_face(self, p: int) -> int:
-        return self.read_u8(0x840A + self.player_offset(p)) & 0x0F
+        po = self.player_offset(p)
+        if self.is_gc and self.profile:
+            return self.read_u8(po + self.profile.p_face)
+        return self.read_u8(po + 0x840A) & 0x0F
 
     def set_face(self, p: int, val: int) -> None:
-        off = 0x840A + self.player_offset(p)
+        po = self.player_offset(p)
+        if self.is_gc and self.profile:
+            self.write_u8(po + self.profile.p_face, val & 0xFF)
+            return
+        off = po + 0x840A
         current = self.read_u8(off)
         self.write_u8(off, (current & 0xF0) | (val & 0x0F))
 
     def get_hair(self, p: int) -> int:
-        return self.read_u8(0x840B + self.player_offset(p))
+        if self.is_gc:
+            return 0  # GC: hair is part of face type
+        return self.read_u8(self.player_offset(p) + 0x840B)
 
     def set_hair(self, p: int, val: int) -> None:
-        self.write_u8(0x840B + self.player_offset(p), min(val, 0x19))
+        if self.is_gc:
+            return
+        self.write_u8(self.player_offset(p) + 0x840B, min(val, 0x19))
 
     def get_hair_color(self, p: int) -> int:
-        return self.read_u8(0x840C + self.player_offset(p))
+        if self.is_gc:
+            return 0
+        return self.read_u8(self.player_offset(p) + 0x840C)
 
     def set_hair_color(self, p: int, val: int) -> None:
-        self.write_u8(0x840C + self.player_offset(p), min(val, 7))
+        if self.is_gc:
+            return
+        self.write_u8(self.player_offset(p) + 0x840C, min(val, 7))
 
     def get_tan(self, p: int) -> int:
-        return self.read_u8(0x8416 + self.player_offset(p))
+        po = self.player_offset(p)
+        if self.is_gc and self.profile:
+            return self.read_u8(po + self.profile.p_tan)
+        return self.read_u8(po + 0x8416)
 
     def set_tan(self, p: int, val: int) -> None:
-        self.write_u8(0x8416 + self.player_offset(p), val & 0xFF)
+        po = self.player_offset(p)
+        if self.is_gc and self.profile:
+            self.write_u8(po + self.profile.p_tan, val & 0xFF)
+            return
+        self.write_u8(po + 0x8416, val & 0xFF)
 
     def get_hat(self, p: int) -> int:
-        return self.read_u8(0x8418 + self.player_offset(p)) >> 1
+        if self.is_gc:
+            return 0  # GC: no hat system
+        return self.read_u8(self.player_offset(p) + 0x8418) >> 1
 
     def set_hat(self, p: int, val: int) -> None:
-        self.write_u8(0x8418 + self.player_offset(p), (min(val, 7) << 1) & 0xFF)
+        if self.is_gc:
+            return
+        self.write_u8(self.player_offset(p) + 0x8418, (min(val, 7) << 1) & 0xFF)
 
     # ======================================================================
     # Emotions
@@ -526,22 +802,40 @@ class SaveHandler:
     # ======================================================================
 
     def get_nook_style(self) -> int:
+        if self.is_gc:
+            return 0  # TODO: find GC nook style offset
         return self.read_u8(0x630C3)
 
     def set_nook_style(self, val: int) -> None:
+        if self.is_gc:
+            return
         self.write_u8(0x630C3, val & 0xFF)
         self.write_u8(0x630C3 + 4, val & 0xFF)
 
     def get_grass_style(self) -> int:
+        if self.is_gc and self.profile:
+            off = self._soff(self.profile.grass_type_offset)
+            if off and off < len(self.data):
+                return self.read_u8(off)
+            return 0
         return self.read_u8(0x6D5B7)
 
     def set_grass_style(self, val: int) -> None:
+        if self.is_gc and self.profile:
+            off = self._soff(self.profile.grass_type_offset)
+            if off and off < len(self.data):
+                self.write_u8(off, min(val, 2))
+            return
         self.write_u8(0x6D5B7, min(val, 2))
 
     def get_gate_style(self) -> int:
+        if self.is_gc:
+            return 0
         return self.read_u8(0x5EAE0)
 
     def set_gate_style(self, val: int) -> None:
+        if self.is_gc:
+            return
         self.write_u8(0x5EAE0, min(val, 2))
 
     def clear_sold_out_flags(self) -> None:
@@ -560,15 +854,25 @@ class SaveHandler:
     # ======================================================================
 
     def get_town_items(self) -> list[int]:
-        """Read 6400 u16 town item codes (80x80 grid) starting at 0x68476."""
-        base = 0x68476
-        return [self.read_u16(base + i * 2) for i in range(6400)]
+        """Read all town item codes."""
+        if self.profile:
+            base = self._soff(self.profile.town_data_offset)
+            count = self.profile.town_item_count
+        else:
+            base = 0x68476
+            count = 6400
+        return [self.read_u16(base + i * 2) for i in range(count)]
 
     def set_town_item(self, index: int, value: int) -> None:
-        """Write a single u16 town item at *index* (0-6399)."""
-        if not (0 <= index < 6400):
-            raise ValueError(f"Town item index must be 0-6399, got {index}")
-        self.write_u16(0x68476 + index * 2, value)
+        """Write a single u16 town item at *index*."""
+        count = self.profile.town_item_count if self.profile else 6400
+        if not (0 <= index < count):
+            raise ValueError(f"Town item index must be 0-{count-1}, got {index}")
+        if self.profile:
+            base = self._soff(self.profile.town_data_offset)
+        else:
+            base = 0x68476
+        self.write_u16(base + index * 2, value)
 
     def get_buried_items(self) -> list[int]:
         """Read 400 u16 buried-item codes starting at 0x6B676."""
@@ -576,25 +880,49 @@ class SaveHandler:
         return [self.read_u16(base + i * 2) for i in range(400)]
 
     def get_acre_layout(self) -> list[int]:
-        """Read the 7x7 (49) u16 acre layout starting at 0x68414."""
-        base = 0x68414
-        return [self.read_u16(base + i * 2) for i in range(49)]
+        """Read the acre layout (u16 acre IDs)."""
+        if self.profile:
+            base = self._soff(self.profile.acre_data_offset)
+            count = self.profile.acre_count
+        else:
+            base = 0x68414
+            count = 49
+        return [self.read_u16(base + i * 2) for i in range(count)]
 
     def get_grass_data(self) -> list[int]:
-        """Read 6400 bytes of grass-wear data starting at 0x6BCB6."""
-        base = 0x6BCB6
-        return [self.read_u8(base + i) for i in range(6400)]
+        """Read grass-wear data."""
+        if self.is_gc:
+            return []  # GC doesn't have grass wear data
+        if self.profile:
+            base = self._soff(self.profile.grass_data_offset)
+            size = self.profile.grass_data_size
+        else:
+            base = 0x6BCB6
+            size = 6400
+        return [self.read_u8(base + i) for i in range(size)]
 
     def set_grass_data(self, data: list[int]) -> None:
-        """Write 6400 bytes of grass-wear data."""
-        base = 0x6BCB6
-        for i in range(min(len(data), 6400)):
+        """Write grass-wear data."""
+        if self.is_gc:
+            return
+        if self.profile:
+            base = self._soff(self.profile.grass_data_offset)
+            size = self.profile.grass_data_size
+        else:
+            base = 0x6BCB6
+            size = 6400
+        for i in range(min(len(data), size)):
             self.write_u8(base + i, data[i])
 
     def set_acre_layout(self, acres: list[int]) -> None:
-        """Write 49 u16 acre codes."""
-        base = 0x68414
-        for i in range(min(len(acres), 49)):
+        """Write acre layout."""
+        if self.profile:
+            base = self._soff(self.profile.acre_data_offset)
+            count = self.profile.acre_count
+        else:
+            base = 0x68414
+            count = 49
+        for i in range(min(len(acres), count)):
             self.write_u16(base + i * 2, acres[i])
 
     # ======================================================================
@@ -749,15 +1077,26 @@ class SaveHandler:
     # ======================================================================
 
     def get_pockets(self, p: int) -> list[int]:
-        """Read 15 u16 pocket-item codes (3 rows x 5 cols)."""
-        base = 0x7F42 + self.player_offset(p)
-        return [self.read_u16(base + i * 2) for i in range(15)]
+        """Read pocket item codes."""
+        po = self.player_offset(p)
+        count = self.profile.p_pockets_count if self.profile else 15
+        if self.profile:
+            base = po + self.profile.p_pockets
+        else:
+            base = 0x7F42 + po
+        return [self.read_u16(base + i * 2) for i in range(count)]
 
     def set_pockets(self, p: int, items: list[int]) -> None:
-        """Write 15 u16 pocket-item codes."""
-        base = 0x7F42 + self.player_offset(p)
-        for i in range(15):
-            val = items[i] if i < len(items) else 0xFFF1
+        """Write pocket item codes."""
+        po = self.player_offset(p)
+        count = self.profile.p_pockets_count if self.profile else 15
+        empty = self.profile.empty_item if self.profile else 0xFFF1
+        if self.profile:
+            base = po + self.profile.p_pockets
+        else:
+            base = 0x7F42 + po
+        for i in range(count):
+            val = items[i] if i < len(items) else empty
             self.write_u16(base + i * 2, val)
 
     def get_drawers(self, p: int) -> list[int]:
@@ -1048,91 +1387,127 @@ class SaveHandler:
         return count
 
     # ======================================================================
-    # Villager / NPC helpers  (ACSE CfVillagerOffsets layout)
+    # Villager / NPC helpers
     # ======================================================================
 
-    # Full villager structs: 10 slots × 0x3040 bytes starting at 0x21B20.
-    # Byte at base+0 is non-zero when the slot is occupied.
+    # ACCF legacy constants (used when no profile is loaded)
     VILLAGER_BASE   = 0x21B20
-    VILLAGER_STRIDE = 0x3040   # 12,352 bytes per villager
+    VILLAGER_STRIDE = 0x3040
     NPC_SLOT_COUNT  = 10
 
-    # Offsets within each 0x3040 villager struct
-    _VOFF_EXISTS      = 0x0000   # u8: non-zero → occupied
-    _VOFF_NPC_ID      = 0x1824   # u16 BE: NPC index (0-453)
-    _VOFF_SHIRT       = 0x1826   # u16 BE: item ID
-    _VOFF_CARPET      = 0x1828   # u16 BE: item ID
-    _VOFF_WALLPAPER   = 0x182A   # u16 BE: item ID
-    _VOFF_UMBRELLA    = 0x182C   # u16 BE: item ID
-    _VOFF_FURNITURE   = 0x182E   # 10 × u16 BE
-    _VOFF_KK_SONG     = 0x1842   # u16 BE
-    _VOFF_CATCHPHRASE = 0x18EC   # UTF-16 BE string (22 bytes)
-    _VOFF_NPC_ID2     = 0x2308   # u16 BE: duplicate NPC index
-    _VOFF_PERSONALITY = 0x230A   # u8: 0-5
+    # ACCF offsets within each villager struct
+    _VOFF_EXISTS      = 0x0000
+    _VOFF_NPC_ID      = 0x1824
+    _VOFF_SHIRT       = 0x1826
+    _VOFF_CARPET      = 0x1828
+    _VOFF_WALLPAPER   = 0x182A
+    _VOFF_UMBRELLA    = 0x182C
+    _VOFF_FURNITURE   = 0x182E
+    _VOFF_KK_SONG     = 0x1842
+    _VOFF_CATCHPHRASE = 0x18EC
+    _VOFF_NPC_ID2     = 0x2308
+    _VOFF_PERSONALITY = 0x230A
 
     def _villager_offset(self, slot: int) -> int:
         """Return the absolute offset of a villager slot's struct."""
+        if self.profile:
+            count = self.profile.villager_count
+            if not 0 <= slot < count:
+                raise ValueError(f"Villager slot must be 0-{count-1}, got {slot}")
+            return self._soff(self.profile.villager_start) + slot * self.profile.villager_stride
         if not 0 <= slot < self.NPC_SLOT_COUNT:
             raise ValueError(f"Villager slot must be 0-9, got {slot}")
         return self.VILLAGER_BASE + slot * self.VILLAGER_STRIDE
 
+    def _villager_count(self) -> int:
+        """Return the number of villager slots for the current game."""
+        if self.profile:
+            return self.profile.villager_count
+        return self.NPC_SLOT_COUNT
+
     def is_slot_occupied(self, slot: int) -> bool:
         """Check whether a villager slot contains a resident."""
-        return self.read_u8(self._villager_offset(slot) + self._VOFF_EXISTS) != 0
+        base = self._villager_offset(slot)
+        if self.is_gc and self.profile:
+            # GC: villager ID at +0x00, 0 = empty
+            npc_id = self.read_u16(base + self.profile.v_id)
+            return npc_id != 0
+        v_exists = self.profile.v_exists if self.profile else self._VOFF_EXISTS
+        return self.read_u8(base + v_exists) != 0
 
     def get_resident_ids(self) -> list[int]:
-        """Read the 10 resident NPC IDs from the villager structs.
+        """Read all resident NPC IDs from the villager structs.
 
-        Returns a list of 10 u16 values.  0xFFFF means an empty slot.
-        Slots where the existence byte is zero return 0xFFFF.
+        Returns a list of u16 values.  0xFFFF means an empty slot.
         """
+        count = self._villager_count()
         result = []
-        for i in range(self.NPC_SLOT_COUNT):
+        for i in range(count):
             base = self._villager_offset(i)
-            if self.read_u8(base + self._VOFF_EXISTS) == 0:
+            if not self.is_slot_occupied(i):
                 result.append(0xFFFF)
             else:
-                result.append(self.read_u16(base + self._VOFF_NPC_ID))
+                v_id = self.profile.v_id if self.profile else self._VOFF_NPC_ID
+                result.append(self.read_u16(base + v_id))
         return result
 
     def set_resident_id(self, slot: int, npc_id: int) -> None:
-        """Write a single NPC ID into a resident slot (0-9).
+        """Write a single NPC ID into a resident slot.
 
-        Writing 0xFFFF marks the slot as empty (clears the existence byte).
-        Any other value sets the existence byte and writes the ID to both
-        NPC ID fields in the struct.
+        Writing 0xFFFF marks the slot as empty.
         """
-        if not 0 <= slot < self.NPC_SLOT_COUNT:
-            raise ValueError(f"Resident slot must be 0-9, got {slot}")
+        count = self._villager_count()
+        if not 0 <= slot < count:
+            raise ValueError(f"Resident slot must be 0-{count-1}, got {slot}")
         if not 0 <= npc_id <= 0xFFFF:
             raise ValueError(f"NPC ID must be 0-65535, got {npc_id}")
 
         base = self._villager_offset(slot)
-        if npc_id == 0xFFFF:
-            self.write_u8(base + self._VOFF_EXISTS, 0)
-            self.write_u16(base + self._VOFF_NPC_ID, 0)
-            self.write_u16(base + self._VOFF_NPC_ID2, 0)
+        v_id = self.profile.v_id if self.profile else self._VOFF_NPC_ID
+
+        if self.is_gc:
+            # GC: just write the ID (0 = empty)
+            self.write_u16(base + v_id, 0 if npc_id == 0xFFFF else npc_id)
         else:
-            self.write_u8(base + self._VOFF_EXISTS, 0x10)
-            self.write_u16(base + self._VOFF_NPC_ID, npc_id)
-            self.write_u16(base + self._VOFF_NPC_ID2, npc_id)
+            # ACCF: set exists byte + both ID fields
+            v_exists = self.profile.v_exists if self.profile else self._VOFF_EXISTS
+            v_id2 = self.profile.v_id2 if self.profile else self._VOFF_NPC_ID2
+            if npc_id == 0xFFFF:
+                self.write_u8(base + v_exists, 0)
+                self.write_u16(base + v_id, 0)
+                if v_id2 >= 0:
+                    self.write_u16(base + v_id2, 0)
+            else:
+                self.write_u8(base + v_exists, 0x10)
+                self.write_u16(base + v_id, npc_id)
+                if v_id2 >= 0:
+                    self.write_u16(base + v_id2, npc_id)
 
     def set_resident_ids(self, ids: list[int]) -> None:
-        """Write all 10 resident NPC IDs at once."""
-        if len(ids) != self.NPC_SLOT_COUNT:
-            raise ValueError(
-                f"Expected {self.NPC_SLOT_COUNT} IDs, got {len(ids)}"
-            )
+        """Write all resident NPC IDs at once."""
+        count = self._villager_count()
+        if len(ids) != count:
+            raise ValueError(f"Expected {count} IDs, got {len(ids)}")
         for i, npc_id in enumerate(ids):
             self.set_resident_id(i, npc_id)
 
     def get_villager_personality(self, slot: int) -> int:
         """Read the in-save personality byte for a villager slot (0-5)."""
-        return self.read_u8(self._villager_offset(slot) + self._VOFF_PERSONALITY)
+        base = self._villager_offset(slot)
+        v_pers = self.profile.v_personality if self.profile else self._VOFF_PERSONALITY
+        return self.read_u8(base + v_pers)
 
     def get_villager_catchphrase(self, slot: int) -> str:
         """Read the in-save catchphrase for a villager slot."""
-        off = self._villager_offset(slot) + self._VOFF_CATCHPHRASE
+        base = self._villager_offset(slot)
+        v_cp = self.profile.v_catchphrase if self.profile else self._VOFF_CATCHPHRASE
+        off = base + v_cp
+
+        if self.is_gc:
+            max_chars = self.profile.v_catchphrase_max if self.profile else 10
+            return self.read_gc_string(off, max_chars)
+
+        # ACCF: UTF-16 BE
         self._check_offset(off, 22)
         raw = bytes(self.data[off:off + 22])
         try:
@@ -1141,8 +1516,17 @@ class SaveHandler:
             return ""
 
     def set_villager_catchphrase(self, slot: int, text: str) -> None:
-        """Write a catchphrase into a villager slot (max 10 chars)."""
-        off = self._villager_offset(slot) + self._VOFF_CATCHPHRASE
+        """Write a catchphrase into a villager slot."""
+        base = self._villager_offset(slot)
+        v_cp = self.profile.v_catchphrase if self.profile else self._VOFF_CATCHPHRASE
+        off = base + v_cp
+
+        if self.is_gc:
+            max_chars = self.profile.v_catchphrase_max if self.profile else 10
+            self.write_gc_string(off, text, max_chars)
+            return
+
+        # ACCF: UTF-16 BE
         self._check_offset(off, 22)
         encoded = text[:10].encode("utf-16-be")
         padded = encoded.ljust(22, b"\x00")[:22]
@@ -1151,43 +1535,71 @@ class SaveHandler:
 
     def get_villager_shirt(self, slot: int) -> int:
         """Read the shirt item ID for a villager slot."""
-        return self.read_u16(self._villager_offset(slot) + self._VOFF_SHIRT)
+        base = self._villager_offset(slot)
+        v_shirt = self.profile.v_shirt if self.profile else self._VOFF_SHIRT
+        return self.read_u16(base + v_shirt)
 
     # ======================================================================
     # Stalk Market (turnip prices)
     # ======================================================================
 
-    _STALK_BASE = 0x63200
+    _STALK_BASE = 0x63200  # Legacy ACCF
+
+    def _stalk_base(self) -> int:
+        """Return the absolute stalk market base offset."""
+        if self.profile:
+            return self._soff(self.profile.stalk_base)
+        return self._STALK_BASE
 
     def get_turnip_buy_price(self) -> int:
-        """Joan's Sunday buy price (u32)."""
-        return self.read_u32(self._STALK_BASE)
+        """Joan's Sunday buy price."""
+        base = self._stalk_base()
+        buy_off = self.profile.stalk_buy_offset if self.profile else 0
+        return self.read_u32(base + buy_off)
 
     def set_turnip_buy_price(self, price: int) -> None:
         if not 0 <= price <= 0xFFFFFFFF:
             raise ValueError(f"Price must be 0-4294967295, got {price}")
-        self.write_u32(self._STALK_BASE, price)
+        base = self._stalk_base()
+        buy_off = self.profile.stalk_buy_offset if self.profile else 0
+        self.write_u32(base + buy_off, price)
 
     def get_turnip_sell_prices(self) -> list[int]:
-        """Read 14 half-day sell prices: Sun AM/PM, Mon AM/PM, ..., Sat AM/PM."""
-        return [self.read_u32(self._STALK_BASE + 4 + i * 4) for i in range(14)]
+        """Read half-day sell prices."""
+        base = self._stalk_base()
+        sell_off = self.profile.stalk_sell_offset if self.profile else 4
+        count = self.profile.stalk_sell_count if self.profile else 14
+        return [self.read_u32(base + sell_off + i * 4) for i in range(count)]
 
     def set_turnip_sell_prices(self, prices: list[int]) -> None:
-        if len(prices) != 14:
-            raise ValueError(f"Expected 14 prices, got {len(prices)}")
+        count = self.profile.stalk_sell_count if self.profile else 14
+        if len(prices) != count:
+            raise ValueError(f"Expected {count} prices, got {len(prices)}")
+        base = self._stalk_base()
+        sell_off = self.profile.stalk_sell_offset if self.profile else 4
         for i, p in enumerate(prices):
             if not 0 <= p <= 0xFFFFFFFF:
                 raise ValueError(f"Price[{i}] must be 0-4294967295, got {p}")
-            self.write_u32(self._STALK_BASE + 4 + i * 4, p)
+            self.write_u32(base + sell_off + i * 4, p)
 
     def get_turnip_pattern(self) -> int:
-        """Stalk market trend type (0-3)."""
-        return self.read_u32(self._STALK_BASE + 0x3C)
+        """Stalk market trend type."""
+        base = self._stalk_base()
+        pat_off = self.profile.stalk_pattern_offset if self.profile else 0x3C
+        if self.is_gc:
+            return self.read_u16(base + pat_off)  # GC: u16
+        return self.read_u32(base + pat_off)
 
     def set_turnip_pattern(self, pattern: int) -> None:
-        if not 0 <= pattern <= 3:
-            raise ValueError(f"Turnip pattern must be 0-3, got {pattern}")
-        self.write_u32(self._STALK_BASE + 0x3C, pattern)
+        max_pat = self.profile.stalk_pattern_max if self.profile else 3
+        if not 0 <= pattern <= max_pat:
+            raise ValueError(f"Turnip pattern must be 0-{max_pat}, got {pattern}")
+        base = self._stalk_base()
+        pat_off = self.profile.stalk_pattern_offset if self.profile else 0x3C
+        if self.is_gc:
+            self.write_u16(base + pat_off, pattern)
+        else:
+            self.write_u32(base + pat_off, pattern)
 
     # ======================================================================
     # Museum donations  (nibble-packed at 0x7352A)
