@@ -31,6 +31,20 @@ EMPTY_PLAYER_CRC = 0xE4A45761
 # CRC seeds
 CRC_SEED_DEFAULT = 0xFFFFFFFF
 CRC_SEED_BUILDINGS = 0x12141018
+CRC_SEED_DLC = 0xFBDFEFE7
+
+# DLC region layout
+DLC_CRC_OFFSET   = 0x20F320
+DLC_ITEMS_OFFSET = 0x20F324
+DLC_SLOT_SIZE    = 0x2000      # 8,192 bytes per slot
+DLC_SLOT_COUNT   = 256
+DLC_BITM_SIZE    = 0x18C       # 396-byte BITM header
+DLC_ASH0_SIZE    = 0x1E70      # ASH0 compressed data region
+DLC_VALID_MARKER = 0x1701
+
+# Catalog bitmap (per-player, relative to player start)
+CATALOG_BITMAP_OFF = 0x72DA
+CATALOG_BITMAP_SIZE = 512      # 4096 bits
 
 # Catalog item ranges  {name: (start_code, end_code)}
 CATALOG_RANGES = {
@@ -307,15 +321,31 @@ class SaveHandler:
             self._write_crc(0x73600, crc)
         return crc
 
+    # -- CRC-DLC (downloadable content) ------------------------------------
+
+    def update_crc_dlc(self, write: bool = True) -> int:
+        """
+        Compute the DLC region CRC.
+
+        Checksum at 0x20F320, covers 0x20F324 to 0x40F324.
+        Seed is 0xFBDFEFE7 (non-standard).
+        """
+        end = DLC_ITEMS_OFFSET + DLC_SLOT_COUNT * DLC_SLOT_SIZE
+        crc = self._compute_crc(DLC_ITEMS_OFFSET, end, CRC_SEED_DLC)
+        if write:
+            self._write_crc(DLC_CRC_OFFSET, crc)
+        return crc
+
     # -- aggregate CRC helpers ----------------------------------------------
 
     def update_all_crc(self) -> None:
-        """Recompute and write all CRC regions (4 players + town/buildings/ext)."""
+        """Recompute and write all CRC regions (4 players + town/buildings/ext + DLC)."""
         for p in range(PLAYER_COUNT):
             self.update_crc_a(p, write=True)
         self.update_crc_b(write=True)
         self.update_crc_c(write=True)
         self.update_crc_d(write=True)
+        self.update_crc_dlc(write=True)
 
     def check_all_crc(self) -> list[str]:
         """
@@ -353,6 +383,13 @@ class SaveHandler:
         if stored != computed:
             mismatches.append(
                 f"CRC-D (extended): stored=0x{stored:08X} computed=0x{computed:08X}"
+            )
+        # CRC-DLC
+        stored = self._read_stored_crc(DLC_CRC_OFFSET)
+        computed = self.update_crc_dlc(write=False)
+        if stored != computed:
+            mismatches.append(
+                f"CRC-DLC: stored=0x{stored:08X} computed=0x{computed:08X}"
             )
         return mismatches
 
@@ -1427,4 +1464,203 @@ class SaveHandler:
         for i in range(self._LETTER_COUNT):
             if not self.is_letter_empty(p, i):
                 count += 1
+        return count
+
+    # ======================================================================
+    # DLC (Downloadable Content) — 256 BITM slots at 0x20F324
+    # ======================================================================
+    #
+    # Each slot is 0x2000 bytes:
+    #   +0x000: "BITM" magic (4 bytes)
+    #   +0x004: Price (u32 BE)
+    #   +0x008: Base item ID (u16 BE)
+    #   +0x00A: Icon index (u16 BE)
+    #   +0x00C: UnkC (u16), +0x00E: UnkE (u16)
+    #   +0x010: Valid marker (u16, must be 0x1701)
+    #   +0x012: 10 language name slots (0x22 bytes each, UTF-16 BE)
+    #          JPN, ENG_US, ESP_US, FRA_US, ENG_EU, DEU, ITA, ESP_EU, FRA_EU, KOR
+    #   +0x166: Class index (u8), +0x167: unk (u8), +0x168: drop model (u8)
+    #   +0x169: Extended metadata (35 bytes)
+    #   +0x18C: ASH0 compressed model/icon data (0x1E70 bytes)
+    #   +0x1FFC: Per-slot CRC32 (4 bytes, seed 0xFBDFEFE7)
+    #
+    # In-game item code = (base_item_id * 4) + 0x9000
+
+    _DLC_NAME_LANGS = (
+        "ja", "en_us", "es_us", "fra_us",
+        "en_eu", "de", "it", "es_eu", "fra_eu", "kr",
+    )
+    _DLC_NAME_OFF  = 0x012   # first name slot within BITM
+    _DLC_NAME_SIZE = 0x22    # 34 bytes per name (17 chars UTF-16 BE)
+
+    def _dlc_slot_offset(self, slot: int) -> int:
+        """Absolute offset of DLC slot *slot* (0-255)."""
+        if not 0 <= slot < DLC_SLOT_COUNT:
+            raise ValueError(f"DLC slot must be 0-255, got {slot}")
+        return DLC_ITEMS_OFFSET + slot * DLC_SLOT_SIZE
+
+    def is_dlc_slot_valid(self, slot: int) -> bool:
+        """Check if a DLC slot contains a valid BITM item."""
+        off = self._dlc_slot_offset(slot)
+        magic = bytes(self.data[off:off + 4])
+        if magic != b"BITM":
+            return False
+        marker = self.read_u16(off + 0x10)
+        return marker == DLC_VALID_MARKER
+
+    def get_dlc_item_count(self) -> int:
+        """Count the number of valid DLC items in the save."""
+        return sum(1 for i in range(DLC_SLOT_COUNT) if self.is_dlc_slot_valid(i))
+
+    def get_dlc_base_id(self, slot: int) -> int:
+        """Read the base item ID from a DLC slot (u16 BE at +0x08)."""
+        return self.read_u16(self._dlc_slot_offset(slot) + 0x08)
+
+    def get_dlc_item_code(self, slot: int) -> int:
+        """Convert a DLC slot's base ID to the in-game item code."""
+        return (self.get_dlc_base_id(slot) * 4) + 0x9000
+
+    def get_dlc_price(self, slot: int) -> int:
+        """Read the price in bells from a DLC slot (u32 BE at +0x04)."""
+        return self.read_u32(self._dlc_slot_offset(slot) + 0x04)
+
+    def set_dlc_price(self, slot: int, price: int) -> None:
+        if not 0 <= price <= 0xFFFFFFFF:
+            raise ValueError(f"Price must fit in u32, got {price}")
+        self.write_u32(self._dlc_slot_offset(slot) + 0x04, price)
+
+    def get_dlc_name(self, slot: int, lang: str = "en_us") -> str:
+        """Read a DLC item name for the given language."""
+        if lang not in self._DLC_NAME_LANGS:
+            raise ValueError(f"Unknown lang '{lang}', use one of {self._DLC_NAME_LANGS}")
+        lang_idx = self._DLC_NAME_LANGS.index(lang)
+        off = self._dlc_slot_offset(slot) + self._DLC_NAME_OFF + lang_idx * self._DLC_NAME_SIZE
+        self._check_offset(off, self._DLC_NAME_SIZE)
+        raw = bytes(self.data[off:off + self._DLC_NAME_SIZE])
+        try:
+            return raw.decode("utf-16-be").rstrip("\x00")
+        except UnicodeDecodeError:
+            return ""
+
+    def set_dlc_name(self, slot: int, name: str, lang: str = "en_us") -> None:
+        """Write a DLC item name for the given language (max 16 chars)."""
+        if lang not in self._DLC_NAME_LANGS:
+            raise ValueError(f"Unknown lang '{lang}', use one of {self._DLC_NAME_LANGS}")
+        lang_idx = self._DLC_NAME_LANGS.index(lang)
+        off = self._dlc_slot_offset(slot) + self._DLC_NAME_OFF + lang_idx * self._DLC_NAME_SIZE
+        self._check_offset(off, self._DLC_NAME_SIZE)
+        encoded = name[:16].encode("utf-16-be")
+        padded = encoded.ljust(self._DLC_NAME_SIZE, b"\x00")[:self._DLC_NAME_SIZE]
+        self.data[off:off + self._DLC_NAME_SIZE] = padded
+        self.modified = True
+
+    def get_dlc_names(self, slot: int) -> dict[str, str]:
+        """Read all 10 language names for a DLC slot."""
+        return {lang: self.get_dlc_name(slot, lang) for lang in self._DLC_NAME_LANGS}
+
+    def get_dlc_class_index(self, slot: int) -> int:
+        """Furniture/item class index (u8 at +0x166)."""
+        return self.read_u8(self._dlc_slot_offset(slot) + 0x166)
+
+    def get_dlc_drop_model(self, slot: int) -> int:
+        """Drop model index (u8 at +0x168)."""
+        return self.read_u8(self._dlc_slot_offset(slot) + 0x168)
+
+    def get_dlc_summary(self, slot: int) -> dict:
+        """Return a summary dict for a DLC slot, or None if empty."""
+        if not self.is_dlc_slot_valid(slot):
+            return None
+        return {
+            "slot": slot,
+            "base_id": self.get_dlc_base_id(slot),
+            "item_code": self.get_dlc_item_code(slot),
+            "price": self.get_dlc_price(slot),
+            "name_en": self.get_dlc_name(slot, "en_us"),
+            "name_ja": self.get_dlc_name(slot, "ja"),
+            "class_idx": self.get_dlc_class_index(slot),
+            "drop_model": self.get_dlc_drop_model(slot),
+        }
+
+    def get_all_dlc(self) -> list[dict]:
+        """Return summaries of all valid DLC items."""
+        result = []
+        for i in range(DLC_SLOT_COUNT):
+            s = self.get_dlc_summary(i)
+            if s is not None:
+                result.append(s)
+        return result
+
+    def clear_dlc_slot(self, slot: int) -> None:
+        """Zero out a DLC slot entirely."""
+        off = self._dlc_slot_offset(slot)
+        self._check_offset(off, DLC_SLOT_SIZE)
+        self.data[off:off + DLC_SLOT_SIZE] = b"\x00" * DLC_SLOT_SIZE
+        self.modified = True
+
+    def write_dlc_slot(self, slot: int, bitm_data: bytes) -> None:
+        """Write raw BITM + ASH0 data into a DLC slot.
+
+        *bitm_data* should be exactly 0x2000 bytes (BITM header + ASH0 + CRC),
+        or up to 0x1FFC bytes (without trailing CRC, which will be computed).
+        """
+        if not 0 <= slot < DLC_SLOT_COUNT:
+            raise ValueError(f"DLC slot must be 0-255, got {slot}")
+        if len(bitm_data) > DLC_SLOT_SIZE:
+            raise ValueError(
+                f"DLC data too large: {len(bitm_data)} bytes (max {DLC_SLOT_SIZE})"
+            )
+        off = self._dlc_slot_offset(slot)
+        self._check_offset(off, DLC_SLOT_SIZE)
+        # Zero the slot first, then write data
+        self.data[off:off + DLC_SLOT_SIZE] = b"\x00" * DLC_SLOT_SIZE
+        self.data[off:off + len(bitm_data)] = bitm_data
+        # Compute and write per-slot CRC at the last 4 bytes
+        slot_crc = _crc32_stream(
+            self.data, off, off + DLC_SLOT_SIZE - 4, CRC_SEED_DLC
+        )
+        struct.pack_into(">I", self.data, off + DLC_SLOT_SIZE - 4, slot_crc)
+        self.modified = True
+
+    def import_dlc_file(self, slot: int, path: str) -> str:
+        """Import a raw DLC .bin file (BITM format) into a slot.
+
+        Returns the item name on success, raises on failure.
+        """
+        from pathlib import Path
+        p = Path(path)
+        raw = p.read_bytes()
+        if len(raw) < 0x18C:
+            raise ValueError(f"File too small for BITM header: {len(raw)} bytes")
+        if raw[:4] != b"BITM":
+            raise ValueError(f"Not a BITM file (magic: {raw[:4]!r})")
+        self.write_dlc_slot(slot, raw)
+        return self.get_dlc_name(slot, "en_us")
+
+    def find_empty_dlc_slot(self) -> int:
+        """Find the first empty DLC slot, or -1 if all are used."""
+        for i in range(DLC_SLOT_COUNT):
+            if not self.is_dlc_slot_valid(i):
+                return i
+        return -1
+
+    def patch_catalog_for_dlc(self, p: int) -> int:
+        """Mark all valid DLC items in player *p*'s catalog bitmap.
+
+        Returns the number of items patched.
+        """
+        po = self.player_offset(p)
+        cat_base = CATALOG_BITMAP_OFF + po
+        self._check_offset(cat_base, CATALOG_BITMAP_SIZE)
+        count = 0
+        for slot in range(DLC_SLOT_COUNT):
+            if not self.is_dlc_slot_valid(slot):
+                continue
+            base_id = self.get_dlc_base_id(slot)
+            # Catalog bit position = base_id
+            byte_off = cat_base + (base_id >> 3)
+            bit_mask = 1 << (base_id & 7)
+            if byte_off < cat_base + CATALOG_BITMAP_SIZE:
+                self.data[byte_off] |= bit_mask
+                count += 1
+        self.modified = True
         return count

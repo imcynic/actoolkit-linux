@@ -270,6 +270,9 @@ class MainWindow(QMainWindow):
         self.action_letter_viewer = QAction("Mai&l Viewer...", self)
         town_menu.addAction(self.action_letter_viewer)
 
+        self.action_dlc_editor = QAction("&DLC Editor...", self)
+        town_menu.addAction(self.action_dlc_editor)
+
         town_menu.addSeparator()
 
         self.action_lost_found = QAction("&Lost && Found...", self)
@@ -436,6 +439,7 @@ class MainWindow(QMainWindow):
         self.action_museum_editor.triggered.connect(self._on_museum_editor)
         self.action_pattern_editor.triggered.connect(self._on_pattern_editor)
         self.action_letter_viewer.triggered.connect(self._on_letter_viewer)
+        self.action_dlc_editor.triggered.connect(self._on_dlc_editor)
         self.action_lost_found.triggered.connect(self._on_lost_found)
         self.action_recycle_bin.triggered.connect(self._on_recycle_bin)
         self.action_remove_weeds.triggered.connect(lambda: self._town_action("remove_weeds"))
@@ -487,6 +491,7 @@ class MainWindow(QMainWindow):
         self.action_museum_editor.setEnabled(enabled)
         self.action_pattern_editor.setEnabled(enabled)
         self.action_letter_viewer.setEnabled(enabled)
+        self.action_dlc_editor.setEnabled(enabled)
         self.action_lost_found.setEnabled(enabled)
         self.action_recycle_bin.setEnabled(enabled)
         self.action_remove_weeds.setEnabled(enabled)
@@ -943,6 +948,15 @@ class MainWindow(QMainWindow):
         from gui.letter_viewer import LetterViewerDialog
         dlg = LetterViewerDialog(self.save_handler, parent=self)
         dlg.exec()
+
+    @pyqtSlot()
+    def _on_dlc_editor(self) -> None:
+        if not self.save_handler:
+            return
+        from gui.dlc_editor import DlcEditorDialog
+        dlg = DlcEditorDialog(self.save_handler, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._mark_modified()
 
     @pyqtSlot()
     def _on_lost_found(self) -> None:
