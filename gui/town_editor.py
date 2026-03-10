@@ -447,11 +447,11 @@ def _build_item_tree(tree: QTreeWidget):
     tree.setHeaderLabels(["Item", "Code"])
     tree.setColumnWidth(0, 220)
 
-    # Group items by (category, subcategory)
+    # Group items by (category, subcategory) - normalize to lowercase
     groups: dict[str, dict[str, list[tuple[int, str]]]] = {}
     for code, info in ITEMS.items():
-        cat = info.get("category", "unknown")
-        sub = info.get("subcategory", "misc")
+        cat = info.get("category", "unknown").lower()
+        sub = info.get("subcategory", "misc").lower()
         groups.setdefault(cat, {}).setdefault(sub, []).append((code, info.get("name_ea", f"0x{code:04X}")))
 
     # Desired top-level order

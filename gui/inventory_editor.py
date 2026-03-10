@@ -280,12 +280,43 @@ class InventoryEditorDialog(QDialog):
     # Item tree
     # ------------------------------------------------------------------
 
+    # Human-readable category labels
+    _CAT_LABELS = {
+        "t_flowers": "Flowers", "t_flowers2": "Flowers (parched)",
+        "t_misc": "Terrain Misc.", "t_patterns": "Patterns",
+        "t_rocks": "Rocks", "t_trees": "Trees",
+        "t_turnips": "Turnips", "t_weeds": "Weeds",
+        "i_bells": "Bell Bags", "i_equipment": "Tools / Equipment",
+        "i_fish": "Fish", "i_flooring": "Flooring",
+        "i_flowers": "Flowers", "i_flowerbags": "Flower Bags",
+        "i_fruits": "Fruits, Misc.", "i_glasses": "Glasses",
+        "i_hats": "Hats", "i_insects": "Insects",
+        "i_songs": "K.K. Songs", "i_mushrooms": "Mushrooms",
+        "i_paper": "Paper", "i_seashells": "Seashells",
+        "i_shirts": "Shirts", "i_umbrellas": "Umbrellas",
+        "i_wallpaper": "Wallpaper", "i_series": "Series",
+        "i_boxing": "Boxing Theme", "i_classroom": "Classroom Theme",
+        "i_construction": "Construction Theme", "i_lab": "Mad Scientist Theme",
+        "i_mario": "Mario Theme", "i_garden": "Mossy Garden Theme",
+        "i_nursery": "Nursery Theme", "i_ship": "Pirate Ship Theme",
+        "i_space": "Space Theme", "i_western": "Western Theme",
+        "i_other1": "Other Sets 1", "i_other2": "Other Sets 2",
+        "i_other3": "Other Sets 3", "i_nintendo": "Nintendo Items",
+        "i_gyroids": "Gyroids", "i_fossils": "Fossils",
+        "i_paintings": "Paintings", "i_plants": "Plants",
+        "i_notused": "Not Used Items", "i_deluxe": "Deluxe Items",
+        "a_barrier": "Barrier", "a_normal": "Normal",
+        "a_ocean": "Oceanfront", "a_river": "River",
+        "a_transition": "Transition",
+    }
+
     def _populate_tree(self):
         self.tree.clear()
         # Group items by category
         cat_nodes: dict[str, QTreeWidgetItem] = {}
         for cat_key, code_list in CATEGORIES.items():
-            parent = QTreeWidgetItem([cat_key, ""])
+            label = self._CAT_LABELS.get(cat_key, cat_key)
+            parent = QTreeWidgetItem([label, ""])
             parent.setFlags(parent.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             cat_nodes[cat_key] = parent
             for code in code_list:

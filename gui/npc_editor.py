@@ -323,11 +323,23 @@ class NpcEditorDialog(QDialog):
     # NPC tree (browser)
     # ------------------------------------------------------------------
 
+    def _get_all_entries(self):
+        """Return all NPC entries from pack.bin or DELUXE_VILLAGERS fallback."""
+        if self.npc_db is not None:
+            return list(self.npc_db.entries)
+        # Fallback: use cached entries built from embedded DELUXE_VILLAGERS
+        if not hasattr(self, "_fallback_cache"):
+            self._fallback_cache = [
+                _FallbackNpcEntry(npc_id, data)
+                for npc_id, data in sorted(DELUXE_VILLAGERS.items())
+            ] if DELUXE_VILLAGERS else []
+        return self._fallback_cache
+
     def _populate_npc_tree(self):
         self.npc_tree.clear()
-        if self.npc_db is None:
-            return
-        self._fill_tree(self.npc_db.entries)
+        entries = self._get_all_entries()
+        if entries:
+            self._fill_tree(entries)
 
     def _fill_tree(self, entries: list[NpcEntry]):
         self.npc_tree.clear()
@@ -347,14 +359,15 @@ class NpcEditorDialog(QDialog):
         self.npc_tree.setSortingEnabled(True)
 
     def _on_filter_changed(self):
-        if self.npc_db is None:
+        all_entries = self._get_all_entries()
+        if not all_entries:
             return
 
         query = self.search_input.text().strip().lower()
         species = self.species_filter.currentText()
         personality = self.personality_filter.currentText()
 
-        filtered = list(self.npc_db.entries)
+        filtered = list(all_entries)
 
         if query:
             filtered = [
@@ -367,7 +380,8 @@ class NpcEditorDialog(QDialog):
             filtered = [e for e in filtered if e.personality == personality]
 
         self._fill_tree(filtered)
-        self.status_label.setText(f"Showing {len(filtered)} of {len(self.npc_db)} NPCs")
+        total = len(self.npc_db) if self.npc_db else len(DELUXE_VILLAGERS)
+        self.status_label.setText(f"Showing {len(filtered)} of {total} NPCs")
 
     # ------------------------------------------------------------------
     # Actions
@@ -419,6 +433,9 @@ class NpcEditorDialog(QDialog):
             return
         try:
             self.npc_db = load_pack_bin(path)
+            # Invalidate fallback cache now that real data is loaded
+            if hasattr(self, "_fallback_cache"):
+                del self._fallback_cache
             self._populate_npc_tree()
             self._populate_residents()
             self.status_label.setText(

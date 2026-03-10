@@ -113,6 +113,7 @@ _TREE_SPEC: list[tuple[str, str, list[tuple[str, str]]]] = [
         ("Shirts", "i_shirts"),
         ("Umbrellas", "i_umbrellas"),
         ("Wallpaper", "i_wallpaper"),
+        ("Deluxe Items", "i_deluxe"),
     ]),
     ("Furniture", "show_furniture", [
         ("Series", "i_series"),

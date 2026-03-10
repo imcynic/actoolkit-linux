@@ -584,6 +584,25 @@ class MainWindow(QMainWindow):
             from deluxe_items import DELUXE_ITEMS, PREVIOUSLY_UNOBTAINABLE
             items_db.ITEMS.update(DELUXE_ITEMS)
             items_db.ITEMS.update(PREVIOUSLY_UNOBTAINABLE)
+            # Add Deluxe items to CATEGORIES so they appear in category-based trees
+            deluxe_codes = sorted(set(DELUXE_ITEMS.keys()) | set(PREVIOUSLY_UNOBTAINABLE.keys()))
+            if deluxe_codes:
+                # Map Deluxe item categories to existing CATEGORIES keys
+                _cat_map = {
+                    "Wallpaper": "i_wallpaper", "Carpet": "i_flooring",
+                    "Clothing": "i_shirts", "Umbrella": "i_umbrellas",
+                    "Headgear": "i_hats", "Accessory": "i_glasses",
+                }
+                for code in deluxe_codes:
+                    info = items_db.ITEMS.get(code)
+                    if info is None:
+                        continue
+                    cat = info.get("category", "")
+                    target_key = _cat_map.get(cat, "i_deluxe")
+                    if target_key not in items_db.CATEGORIES:
+                        items_db.CATEGORIES[target_key] = []
+                    if code not in items_db.CATEGORIES[target_key]:
+                        items_db.CATEGORIES[target_key].append(code)
         except Exception:
             pass
 
