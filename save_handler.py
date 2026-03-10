@@ -37,13 +37,14 @@ EMPTY_PLAYER_CRC = 0xE4A45761
 # CRC seeds
 CRC_SEED_DEFAULT = 0xFFFFFFFF
 CRC_SEED_BUILDINGS = 0x12141018
-CRC_SEED_DLC = 0xFBDFEFE7
+CRC_SEED_DLC = 0x04201018
 
 # DLC region layout
 DLC_CRC_OFFSET   = 0x20F320
 DLC_ITEMS_OFFSET = 0x20F324
 DLC_SLOT_SIZE    = 0x2000      # 8,192 bytes per slot
 DLC_SLOT_COUNT   = 256
+DLC_END_OFFSET   = DLC_ITEMS_OFFSET + DLC_SLOT_COUNT * DLC_SLOT_SIZE  # 0x40F324
 DLC_BITM_SIZE    = 0x18C       # 396-byte BITM header
 DLC_ASH0_SIZE    = 0x1E70      # ASH0 compressed data region
 DLC_VALID_MARKER = 0x1701
@@ -289,28 +290,66 @@ class SaveHandler:
 
     # -- string helpers -----------------------------------------------------
 
-    # GC Animal Crossing custom character encoding table
-    # Maps byte values to Unicode characters (subset)
-    _GC_CHAR_TABLE = (
-        # 0x00-0x09: digits
-        "0123456789"
-        # 0x0A-0x23: uppercase A-Z
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        # 0x24-0x3D: lowercase a-z
-        "abcdefghijklmnopqrstuvwxyz"
+    # GC Animal Crossing character encoding.
+    # Mostly ASCII-compatible for common characters:
+    #   0x20 = space, 0x30-39 = digits, 0x41-5A = A-Z, 0x61-7A = a-z
+    # The 0x00-0x1F range is European accented capitals (not control codes).
+    # Full 256-entry table from ac-decomp/tools/msg_tool.py (CHAR_MAP).
+    # For save editor use, we only need the printable subset — names are
+    # ASCII-compatible and space-padded (0x20).
+
+    # Byte-to-char lookup (256 entries, index = byte value)
+    _GC_CHAR_TABLE: tuple[str, ...] = (
+        # 0x00-0x1F: European accented capitals
+        "¡", "¿", "Ä", "À", "Á", "Â", "Ã", "Å",
+        "Ç", "È", "É", "Ê", "Ë", "Ì", "Í", "Î",
+        "Ï", "Ð", "Ñ", "Ò", "Ó", "Ô", "Õ", "Ö",
+        "Ø", "Ù", "Ú", "Û", "Ü", "ß", "Þ", "à",
+        # 0x20-0x2F: space, punctuation, specials
+        " ", "!", '"', "á", "â", "%", "&", "'",
+        "(", ")", "~", "♥", ",", "-", ".", "♪",
+        # 0x30-0x39: digits
+        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+        # 0x3A-0x40: punctuation
+        ":", "💧", "<", "=", ">", "?", "@",
+        # 0x41-0x5A: uppercase A-Z
+        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
+        "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+        "U", "V", "W", "X", "Y", "Z",
+        # 0x5B-0x60: accented/special
+        "ã", "💢", "ä", "å", "_", "ç",
+        # 0x61-0x7A: lowercase a-z
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
+        "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
+        "u", "v", "w", "x", "y", "z",
+        # 0x7B-0x7F: accented e variants + control escape
+        "è", "é", "ê", "ë", "\x7f",
+        # 0x80-0x9F: accented lowercase + typographic
+        "�", "ì", "í", "î", "ï", "•", "ð", "ñ",
+        "ò", "ó", "ô", "õ", "ö", "œ", "ù", "ú",
+        "ー", "û", "ü", "ý", "ÿ", "þ", "Ý", "¦",
+        "§", "ª", "º", "‖", "µ", "³", "²", "¹",
+        # 0xA0-0xAF: typographic + weather
+        "¯", "¬", "Æ", "æ", "„", "»", "«", "☀",
+        "☁", "☂", "🌬", "☃", "∋", "∈", "/", "∞",
+        # 0xB0-0xBF: game symbols
+        "○", "✕", "□", "△", "+", "⚡", "♂", "♀",
+        "🍀", "★", "💀", "😮", "😄", "😣", "😠", "😃",
+        # 0xC0-0xCF: more symbols
+        "×", "÷", "🔨", "🎀", "✉", "💰", "🐾", "🐶",
+        "🐱", "🐰", "🐦", "🐮", "🐷", "\n", "🐟", "🐞",
+        # 0xD0-0xDF: misc punctuation
+        ";", "#", " ", " ", "⚷", "'", "'", "—",
+        "–", "Œ", "œ", "ᵉ", "ᵉʳ", "ʳᵉ", "\\",
+        " ",
+        # 0xE0-0xFF: reserved/unused (map to replacement char)
+        "�", "�", "�", "�", "�", "�", "�", "�",
+        "�", "�", "�", "�", "�", "�", "�", "�",
+        "�", "�", "�", "�", "�", "�", "�", "�",
+        "�", "�", "�", "�", "�", "�", "�", "�",
     )
-    # Special characters starting at 0x3E
-    _GC_SPECIAL = {
-        0x3E: " ", 0x3F: "!", 0x40: '"', 0x41: "#", 0x42: "$",
-        0x43: "%", 0x44: "&", 0x45: "'", 0x46: "(", 0x47: ")",
-        0x48: "*", 0x49: "+", 0x4A: ",", 0x4B: "-", 0x4C: ".",
-        0x4D: "/", 0x4E: ":", 0x4F: ";", 0x50: "<", 0x51: "=",
-        0x52: ">", 0x53: "?", 0x54: "@", 0x55: "[", 0x56: "\\",
-        0x57: "]", 0x58: "^", 0x59: "_", 0x5A: "`", 0x5B: "{",
-        0x5C: "|", 0x5D: "}", 0x5E: "~",
-        0x80: " ",  # Non-breaking space / terminator variant
-    }
-    # Build reverse table for encoding
+
+    # Build reverse table for encoding (char -> byte)
     _GC_REVERSE: dict[str, int] = {}
 
     @classmethod
@@ -318,38 +357,46 @@ class SaveHandler:
         if cls._GC_REVERSE:
             return cls._GC_REVERSE
         for i, ch in enumerate(cls._GC_CHAR_TABLE):
-            cls._GC_REVERSE[ch] = i
-        for byte_val, ch in cls._GC_SPECIAL.items():
-            if ch not in cls._GC_REVERSE:  # Don't overwrite primary mapping
-                cls._GC_REVERSE[ch] = byte_val
+            if ch and ch != "�" and ch != "\x7f" and ch != "\n":
+                if ch not in cls._GC_REVERSE:  # First mapping wins
+                    cls._GC_REVERSE[ch] = i
         return cls._GC_REVERSE
 
     def read_gc_string(self, offset: int, max_chars: int = 8) -> str:
-        """Read a GC-encoded string (1 byte per char, custom encoding)."""
+        """
+        Read a GC-encoded string (1 byte per char).
+
+        Strings in GC saves are space-padded (0x20) to the max width.
+        The encoding is ASCII-compatible for common characters.
+        0x7F is a control escape (stop reading).  0xCD is newline
+        (replaced with space for name/catchphrase contexts).
+        """
         self._check_offset(offset, max_chars)
         chars: list[str] = []
         for i in range(max_chars):
             b = self.data[offset + i]
-            if b == 0 or b == 0xFF:
-                break
+            if b == 0x7F:
+                break  # Control escape — stop
             if b < len(self._GC_CHAR_TABLE):
-                chars.append(self._GC_CHAR_TABLE[b])
-            elif b in self._GC_SPECIAL:
-                chars.append(self._GC_SPECIAL[b])
+                ch = self._GC_CHAR_TABLE[b]
+                if ch == "�":
+                    break  # Reserved/invalid — stop
+                # Replace newline with space for display
+                chars.append(" " if ch == "\n" else ch)
             else:
-                chars.append(f"\\x{b:02X}")
-        return "".join(chars)
+                break
+        return "".join(chars).rstrip()
 
     def write_gc_string(self, offset: int, text: str, max_chars: int = 8) -> None:
-        """Write a GC-encoded string (1 byte per char, custom encoding)."""
+        """Write a GC-encoded string (1 byte per char, space-padded)."""
         self._check_offset(offset, max_chars)
         reverse = self._build_gc_reverse()
         for i in range(max_chars):
             if i < len(text):
                 ch = text[i]
-                b = reverse.get(ch, 0x3E)  # Default to space
+                b = reverse.get(ch, 0x20)  # Default to space
             else:
-                b = 0  # Null terminator / padding
+                b = 0x20  # Space padding
             self.data[offset + i] = b
         self.modified = True
 
@@ -402,10 +449,12 @@ class SaveHandler:
         """
         start = self._save_data_start
         size = self.profile.save_payload_size if self.profile else 0x26000
+        end = start + size
+        if end > len(self.data):
+            end = len(self.data) & ~1  # Clamp to even boundary
         cksum_off = start + 0x12  # Checksum location within save data
         total = 0
-        for i in range(0, size, 2):
-            off = start + i
+        for off in range(start, end, 2):
             if off == cksum_off:
                 continue  # Skip the checksum itself
             word = (self.data[off] << 8) | self.data[off + 1]
@@ -490,10 +539,11 @@ class SaveHandler:
         """
         Compute the DLC region CRC.
 
-        Checksum at 0x20F320, covers 0x20F324 to end of file.
-        Seed is 0xFBDFEFE7 (non-standard).
+        Checksum at 0x20F320, covers 0x20F324..0x40F324 (256 slots * 0x2000).
+        Seed is 0x04201018.
         """
-        crc = self._compute_crc(DLC_ITEMS_OFFSET, len(self.data), CRC_SEED_DLC)
+        end = min(DLC_END_OFFSET, len(self.data))
+        crc = self._compute_crc(DLC_ITEMS_OFFSET, end, CRC_SEED_DLC)
         if write:
             self._write_crc(DLC_CRC_OFFSET, crc)
         return crc
@@ -603,12 +653,18 @@ class SaveHandler:
         GC: Check if player name is non-empty.
         """
         if self.is_gc:
-            # GC: check if player name starts with a non-null byte
+            # GC: check if player name starts with a non-space byte
+            # (GC names are space-padded; an empty slot is all spaces 0x20)
+            if not self.profile:
+                return False
             po = self.player_offset(p)
             name_off = po + self.profile.p_name
-            if name_off >= len(self.data):
+            max_len = self.profile.p_name_max
+            if name_off + max_len > len(self.data):
                 return False
-            return self.data[name_off] != 0
+            # Empty if all spaces (0x20) or all zeros
+            name_bytes = self.data[name_off:name_off + max_len]
+            return not all(b == 0x20 for b in name_bytes) and any(b != 0 for b in name_bytes)
         # ACCF
         crc = self.update_crc_a(p, write=False)
         return crc != EMPTY_PLAYER_CRC
@@ -623,7 +679,7 @@ class SaveHandler:
 
     def set_wallet(self, p: int, val: int) -> None:
         po = self.player_offset(p)
-        max_val = 99999 if self.is_accf else 99999
+        max_val = 99999
         if self.profile:
             self.write_u32(po + self.profile.p_wallet, min(val, max_val))
         else:
@@ -777,7 +833,10 @@ class SaveHandler:
 
         Stored value 0xFF means "none" -> returned as 0.
         Otherwise returned as stored_value + 1.
+        GC does not have equippable emotions.
         """
+        if self.is_gc:
+            return [0, 0, 0, 0]
         base = 0x8634 + self.player_offset(p)
         result: list[int] = []
         for i in range(4):
@@ -792,6 +851,8 @@ class SaveHandler:
         Input value 0 -> stored as 0xFF (none).
         Otherwise stored as input_value - 1.
         """
+        if self.is_gc:
+            return
         base = 0x8634 + self.player_offset(p)
         for i in range(4):
             val = emotions[i] if i < len(emotions) else 0
@@ -843,8 +904,10 @@ class SaveHandler:
         Clear the 36 sold-out flag bytes at 0x630CA.
 
         Each flag is separated by a 4-byte stride (write 0 at byte 0 of each
-        4-byte entry).
+        4-byte entry).  ACCF only.
         """
+        if self.is_gc:
+            return
         base = 0x630CA
         for i in range(36):
             self.write_u8(base + i * 4, 0)
@@ -875,7 +938,9 @@ class SaveHandler:
         self.write_u16(base + index * 2, value)
 
     def get_buried_items(self) -> list[int]:
-        """Read 400 u16 buried-item codes starting at 0x6B676."""
+        """Read 400 u16 buried-item codes starting at 0x6B676.  ACCF only."""
+        if self.is_gc:
+            return []
         base = 0x6B676
         return [self.read_u16(base + i * 2) for i in range(400)]
 
@@ -960,12 +1025,14 @@ class SaveHandler:
 
     def get_buildings(self) -> list[tuple[int, int]]:
         """
-        Read all 35 building coordinates as ``(x, y)`` tuples.
+        Read all 35 building coordinates as ``(x, y)`` tuples.  ACCF only.
 
         Buildings 0-32 are at $5EB0A, building 33 (Pavé) at $5EB90,
         building 34 (Bus Stop) at $5EB8A.  Coordinates of (0, 0) mean
         the building does not exist.
         """
+        if self.is_gc:
+            return []
         buildings: list[tuple[int, int]] = []
         # Buildings 0-32 at $5EB0A
         base = 0x5EB0A
@@ -984,7 +1051,9 @@ class SaveHandler:
         return buildings
 
     def set_building(self, building_id: int, x: int, y: int) -> None:
-        """Set coordinates for building *building_id* (0-34)."""
+        """Set coordinates for building *building_id* (0-34).  ACCF only."""
+        if self.is_gc:
+            return
         if not (0 <= building_id < self.BUILDING_COUNT):
             raise ValueError(f"Building ID must be 0-34, got {building_id}")
         if building_id < 33:
@@ -997,7 +1066,9 @@ class SaveHandler:
         self.write_u8(base + 1, y & 0xFF)
 
     def get_signs(self) -> list[tuple[int, int]]:
-        """Read all 100 sign coordinates as ``(x, y)`` tuples."""
+        """Read all 100 sign coordinates as ``(x, y)`` tuples.  ACCF only."""
+        if self.is_gc:
+            return []
         base = 0x5EB92
         signs: list[tuple[int, int]] = []
         for i in range(self.SIGN_COUNT):
@@ -1007,7 +1078,9 @@ class SaveHandler:
         return signs
 
     def set_sign(self, sign_id: int, x: int, y: int) -> None:
-        """Set coordinates for sign *sign_id* (0-99)."""
+        """Set coordinates for sign *sign_id* (0-99).  ACCF only."""
+        if self.is_gc:
+            return
         if not (0 <= sign_id < self.SIGN_COUNT):
             raise ValueError(f"Sign ID must be 0-99, got {sign_id}")
         base = 0x5EB92 + sign_id * 2
@@ -1040,23 +1113,29 @@ class SaveHandler:
 
     def get_buried_bitmap(self) -> list[int]:
         """
-        Read 400 u16 buried-item bitmask words starting at 0x6B676.
+        Read 400 u16 buried-item bitmask words starting at 0x6B676.  ACCF only.
 
         Each word is a 16-bit bitmask covering one row of 16 tiles within
         an acre.  25 acres × 16 rows = 400 words total.
         Bit N set means column N in that row has a buried item.
         """
+        if self.is_gc:
+            return []
         base = 0x6B676
         return [self.read_u16(base + i * 2) for i in range(400)]
 
     def set_buried_bitmap(self, bitmap: list[int]) -> None:
-        """Write 400 u16 buried-item bitmask words."""
+        """Write 400 u16 buried-item bitmask words.  ACCF only."""
+        if self.is_gc:
+            return
         base = 0x6B676
         for i in range(min(len(bitmap), 400)):
             self.write_u16(base + i * 2, bitmap[i])
 
     def is_buried(self, col: int, row: int, acre: int) -> bool:
         """Check if tile (col, row) in acre has a buried item."""
+        if self.is_gc:
+            return False
         bitmap = self.get_buried_bitmap()
         word_idx = (row % 16) + acre * 16
         if not (0 <= word_idx < 400):
@@ -1064,7 +1143,9 @@ class SaveHandler:
         return bool(bitmap[word_idx] & (1 << (col % 16)))
 
     def toggle_buried(self, col: int, row: int, acre: int) -> None:
-        """Toggle the buried flag for tile (col, row) in acre."""
+        """Toggle the buried flag for tile (col, row) in acre.  ACCF only."""
+        if self.is_gc:
+            return
         base = 0x6B676
         word_idx = (row % 16) + acre * 16
         if not (0 <= word_idx < 400):
@@ -1100,36 +1181,48 @@ class SaveHandler:
             self.write_u16(base + i * 2, val)
 
     def get_drawers(self, p: int) -> list[int]:
-        """Read 160 u16 drawer-item codes (32 rows x 5 cols)."""
+        """Read 160 u16 drawer-item codes (32 rows x 5 cols).  ACCF only."""
+        if self.is_gc:
+            return []
         base = 0x1F3038 + p * 0x140
         return [self.read_u16(base + i * 2) for i in range(160)]
 
     def set_drawers(self, p: int, items: list[int]) -> None:
-        """Write 160 u16 drawer-item codes."""
+        """Write 160 u16 drawer-item codes.  ACCF only."""
+        if self.is_gc:
+            return
         base = 0x1F3038 + p * 0x140
         for i in range(160):
             val = items[i] if i < len(items) else 0xFFF1
             self.write_u16(base + i * 2, val)
 
     def get_lost_found(self) -> list[int]:
-        """Read 12 u16 lost-and-found items (2x6) at 0x72DDA."""
+        """Read 12 u16 lost-and-found items (2x6) at 0x72DDA.  ACCF only."""
+        if self.is_gc:
+            return []
         base = 0x72DDA
         return [self.read_u16(base + i * 2) for i in range(12)]
 
     def set_lost_found(self, items: list[int]) -> None:
-        """Write 12 u16 lost-and-found items."""
+        """Write 12 u16 lost-and-found items.  ACCF only."""
+        if self.is_gc:
+            return
         base = 0x72DDA
         for i in range(12):
             val = items[i] if i < len(items) else 0xFFF1
             self.write_u16(base + i * 2, val)
 
     def get_recycle_bin(self) -> list[int]:
-        """Read 12 u16 recycle-bin items (2x6) at 0x72DF2."""
+        """Read 12 u16 recycle-bin items (2x6) at 0x72DF2.  ACCF only."""
+        if self.is_gc:
+            return []
         base = 0x72DF2
         return [self.read_u16(base + i * 2) for i in range(12)]
 
     def set_recycle_bin(self, items: list[int]) -> None:
-        """Write 12 u16 recycle-bin items."""
+        """Write 12 u16 recycle-bin items.  ACCF only."""
+        if self.is_gc:
+            return
         base = 0x72DF2
         for i in range(12):
             val = items[i] if i < len(items) else 0xFFF1
@@ -1137,15 +1230,19 @@ class SaveHandler:
 
     def get_nook_items(self) -> list[int]:
         """
-        Read 36 u16 Nook shop items at 0x630C8.
+        Read 36 u16 Nook shop items at 0x630C8.  ACCF only.
 
         Items are stored with a 4-byte stride (2 bytes item + 2 bytes padding).
         """
+        if self.is_gc:
+            return []
         base = 0x630C8
         return [self.read_u16(base + i * 4) for i in range(36)]
 
     def set_nook_items(self, items: list[int]) -> None:
-        """Write 36 u16 Nook shop items with 4-byte stride."""
+        """Write 36 u16 Nook shop items with 4-byte stride.  ACCF only."""
+        if self.is_gc:
+            return
         base = 0x630C8
         for i in range(36):
             val = items[i] if i < len(items) else 0xFFF1
@@ -1161,11 +1258,13 @@ class SaveHandler:
 
     def get_house_room(self, room_index: int, floor: int) -> list[int]:
         """
-        Read a 16x16 (256) u16 room grid.
+        Read a 16x16 (256) u16 room grid.  ACCF only.
 
         *room_index*: 0-3 (one per player).
         *floor*: 0-5 (three floor levels x 2 sides).
         """
+        if self.is_gc:
+            return []  # TODO: implement GC house reading
         if not (0 <= room_index < PLAYER_COUNT):
             raise ValueError(f"room_index must be 0-3, got {room_index}")
         if not (0 <= floor < 6):
@@ -1179,12 +1278,14 @@ class SaveHandler:
 
     def get_house_items(self, room_index: int) -> list[list[int]]:
         """
-        Return all 6 grids for *room_index* (3 floors x 2 sides).
+        Return all 6 grids for *room_index* (3 floors x 2 sides).  ACCF only.
 
         Returns a list of 6 lists, each containing 256 u16 values:
             [floor0_left, floor0_right, floor1_left, floor1_right,
              floor2_left, floor2_right]
         """
+        if self.is_gc:
+            return []  # TODO: implement GC house reading
         if not (0 <= room_index < PLAYER_COUNT):
             raise ValueError(f"room_index must be 0-3, got {room_index}")
         grids: list[list[int]] = []
@@ -1220,7 +1321,9 @@ class SaveHandler:
         return byte_off, bit_mask
 
     def catalog_total(self, p: int, range_start: int, range_end: int) -> int:
-        """Count how many catalog bits are set in the given item-code range."""
+        """Count how many catalog bits are set in the given item-code range.  ACCF only."""
+        if self.is_gc:
+            return 0
         catalog_base = 0x841A + self.player_offset(p)
         count = 0
         code = range_start
@@ -1232,7 +1335,9 @@ class SaveHandler:
         return count
 
     def fill_catalog(self, p: int, range_start: int, range_end: int) -> None:
-        """Set all catalog bits in the given item-code range."""
+        """Set all catalog bits in the given item-code range.  ACCF only."""
+        if self.is_gc:
+            return
         catalog_base = 0x841A + self.player_offset(p)
         code = range_start
         while code <= range_end:
@@ -1293,10 +1398,12 @@ class SaveHandler:
         """
         Search the save for all occurrences of player *p*'s
         town_id + town_name + special_byte pattern and replace the
-        town_name portion with *new_name*.
+        town_name portion with *new_name*.  ACCF only.
 
         Returns the number of replacements made.
         """
+        if self.is_gc:
+            return 0  # TODO: implement GC town name update
         po = self.player_offset(p)
         town_id = self.read_u16(0x7EE2 + po)
         old_name = self.get_town_name(p)
@@ -1340,10 +1447,12 @@ class SaveHandler:
         """
         Search the save for all occurrences of player *p*'s
         town_id + town_name + special_byte + player_name pattern and replace
-        the player_name portion with *new_name*.
+        the player_name portion with *new_name*.  ACCF only.
 
         Returns the number of replacements made.
         """
+        if self.is_gc:
+            return 0  # TODO: implement GC player name update
         po = self.player_offset(p)
         town_id = self.read_u16(0x7EE2 + po)
         town_name = self.get_town_name(p)
@@ -1555,20 +1664,25 @@ class SaveHandler:
         """Joan's Sunday buy price."""
         base = self._stalk_base()
         buy_off = self.profile.stalk_buy_offset if self.profile else 0
+        if self.is_gc:
+            return self.read_u16(base + buy_off)
         return self.read_u32(base + buy_off)
 
     def set_turnip_buy_price(self, price: int) -> None:
-        if not 0 <= price <= 0xFFFFFFFF:
-            raise ValueError(f"Price must be 0-4294967295, got {price}")
         base = self._stalk_base()
         buy_off = self.profile.stalk_buy_offset if self.profile else 0
-        self.write_u32(base + buy_off, price)
+        if self.is_gc:
+            self.write_u16(base + buy_off, min(price, 0xFFFF))
+        else:
+            self.write_u32(base + buy_off, min(price, 0xFFFFFFFF))
 
     def get_turnip_sell_prices(self) -> list[int]:
-        """Read half-day sell prices."""
+        """Read sell prices (GC: 6 daily u16; ACCF: 14 half-day u32)."""
         base = self._stalk_base()
         sell_off = self.profile.stalk_sell_offset if self.profile else 4
         count = self.profile.stalk_sell_count if self.profile else 14
+        if self.is_gc:
+            return [self.read_u16(base + sell_off + i * 2) for i in range(count)]
         return [self.read_u32(base + sell_off + i * 4) for i in range(count)]
 
     def set_turnip_sell_prices(self, prices: list[int]) -> None:
@@ -1577,10 +1691,12 @@ class SaveHandler:
             raise ValueError(f"Expected {count} prices, got {len(prices)}")
         base = self._stalk_base()
         sell_off = self.profile.stalk_sell_offset if self.profile else 4
-        for i, p in enumerate(prices):
-            if not 0 <= p <= 0xFFFFFFFF:
-                raise ValueError(f"Price[{i}] must be 0-4294967295, got {p}")
-            self.write_u32(base + sell_off + i * 4, p)
+        if self.is_gc:
+            for i, p in enumerate(prices):
+                self.write_u16(base + sell_off + i * 2, min(p, 0xFFFF))
+        else:
+            for i, p in enumerate(prices):
+                self.write_u32(base + sell_off + i * 4, min(p, 0xFFFFFFFF))
 
     def get_turnip_pattern(self) -> int:
         """Stalk market trend type."""
@@ -1636,19 +1752,29 @@ class SaveHandler:
         self.modified = True
 
     def get_museum_fossils(self) -> list[int]:
+        if self.is_gc:
+            return []
         return self._read_museum_nibbles(self._MUSEUM_FOSSIL_OFF, self._MUSEUM_FOSSIL_SIZE)
 
     def get_museum_fish(self) -> list[int]:
+        if self.is_gc:
+            return []
         return self._read_museum_nibbles(self._MUSEUM_FISH_OFF, self._MUSEUM_FISH_SIZE)
 
     def get_museum_insects(self) -> list[int]:
+        if self.is_gc:
+            return []
         return self._read_museum_nibbles(self._MUSEUM_INSECT_OFF, self._MUSEUM_INSECT_SIZE)
 
     def get_museum_art(self) -> list[int]:
+        if self.is_gc:
+            return []
         return self._read_museum_nibbles(self._MUSEUM_ART_OFF, self._MUSEUM_ART_SIZE)
 
     def fill_museum(self, player: int = 0) -> None:
-        """Mark all museum items as donated by *player* (0-3)."""
+        """Mark all museum items as donated by *player* (0-3).  ACCF only."""
+        if self.is_gc:
+            return
         if not 0 <= player <= 3:
             raise ValueError(f"Player must be 0-3, got {player}")
         donor = player + 1
@@ -1662,7 +1788,9 @@ class SaveHandler:
             self._write_museum_nibbles(off, size, vals)
 
     def clear_museum(self) -> None:
-        """Clear all museum donations."""
+        """Clear all museum donations.  ACCF only."""
+        if self.is_gc:
+            return
         total = self._MUSEUM_FOSSIL_SIZE + self._MUSEUM_FISH_SIZE + \
                 self._MUSEUM_INSECT_SIZE + self._MUSEUM_ART_SIZE
         base = self._MUSEUM_BASE
@@ -1676,7 +1804,9 @@ class SaveHandler:
     # ======================================================================
 
     def get_encyclopedia_insects(self, p: int) -> list[bool]:
-        """Read 64 insect caught flags for player *p*."""
+        """Read 64 insect caught flags for player *p*.  ACCF only."""
+        if self.is_gc:
+            return []
         base = 0x8465 + self.player_offset(p)
         bits = []
         for i in range(8):
@@ -1686,7 +1816,9 @@ class SaveHandler:
         return bits
 
     def get_encyclopedia_fish(self, p: int) -> list[bool]:
-        """Read 68 fish caught flags for player *p*."""
+        """Read 68 fish caught flags for player *p*.  ACCF only."""
+        if self.is_gc:
+            return []
         base = 0x8471 + self.player_offset(p)
         bits = []
         # First byte: only upper 4 bits
@@ -1705,7 +1837,9 @@ class SaveHandler:
         return bits
 
     def fill_encyclopedia(self, p: int) -> None:
-        """Mark all fish and insects as caught for player *p*."""
+        """Mark all fish and insects as caught for player *p*.  ACCF only."""
+        if self.is_gc:
+            return
         po = self.player_offset(p)
         # Insects: 8 full bytes at 0x8465
         for i in range(8):
@@ -1733,12 +1867,14 @@ class SaveHandler:
     _PAT_PALETTE_ID = 0x86F    # u8 palette group index
 
     def _pattern_offset(self, p: int, slot: int) -> int:
-        """Absolute offset of pattern *slot* (0-7) for player *p* (0-3)."""
+        """Absolute offset of pattern *slot* (0-7) for player *p* (0-3).  ACCF layout."""
         if not 0 <= slot < self._PATTERN_COUNT:
             raise ValueError(f"Pattern slot must be 0-7, got {slot}")
         return self._PATTERN_BASE + self.player_offset(p) + slot * self._PATTERN_SIZE
 
     def get_pattern_title(self, p: int, slot: int) -> str:
+        if self.is_gc:
+            return ""  # TODO: implement GC pattern titles
         off = self._pattern_offset(p, slot) + self._PAT_TITLE
         self._check_offset(off, 32)
         raw = bytes(self.data[off:off + 32])
@@ -1748,6 +1884,8 @@ class SaveHandler:
             return ""
 
     def set_pattern_title(self, p: int, slot: int, title: str) -> None:
+        if self.is_gc:
+            return
         off = self._pattern_offset(p, slot) + self._PAT_TITLE
         self._check_offset(off, 32)
         encoded = title[:16].encode("utf-16-be")
@@ -1756,6 +1894,8 @@ class SaveHandler:
         self.modified = True
 
     def get_pattern_creator(self, p: int, slot: int) -> str:
+        if self.is_gc:
+            return ""
         off = self._pattern_offset(p, slot) + self._PAT_CREATOR
         self._check_offset(off, 16)
         raw = bytes(self.data[off:off + 16])
@@ -1765,7 +1905,9 @@ class SaveHandler:
             return ""
 
     def get_pattern_palette_rgb(self, p: int, slot: int) -> list[tuple[int, int, int]]:
-        """Read the 16-color RGB565 palette, return as list of (R, G, B) tuples."""
+        """Read the 16-color RGB565 palette, return as list of (R, G, B) tuples.  ACCF only."""
+        if self.is_gc:
+            return []
         off = self._pattern_offset(p, slot) + self._PAT_PALETTE
         self._check_offset(off, 32)
         colors = []
@@ -1778,7 +1920,9 @@ class SaveHandler:
         return colors
 
     def get_pattern_pixels(self, p: int, slot: int) -> list[list[int]]:
-        """Read 32×32 pixel indices (0-15) in raster order from C4 block data."""
+        """Read 32x32 pixel indices (0-15) in raster order from C4 block data.  ACCF only."""
+        if self.is_gc:
+            return []
         off = self._pattern_offset(p, slot) + self._PAT_PIXELS
         self._check_offset(off, 0x200)
         raw = bytes(self.data[off:off + 0x200])
@@ -1894,7 +2038,7 @@ class SaveHandler:
     #   +0x166: Class index (u8), +0x167: unk (u8), +0x168: drop model (u8)
     #   +0x169: Extended metadata (35 bytes)
     #   +0x18C: ASH0 compressed model/icon data (0x1E70 bytes)
-    #   +0x1FFC: Per-slot CRC32 (4 bytes, seed 0xFBDFEFE7)
+    #   +0x1FFC: Per-slot CRC32 (4 bytes, seed 0x04201018)
     #
     # In-game item code = (base_item_id * 4) + 0x9000
 

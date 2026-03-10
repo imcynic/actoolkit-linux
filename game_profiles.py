@@ -16,7 +16,7 @@ Offsets marked "rel:villager" are relative to the villager struct start.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum, auto
 
 
@@ -314,11 +314,11 @@ GC_PROFILE = GameProfile(
     v_shirt=0x8E4,
     v_id2=-1,                # No second ID field
 
-    # Stalk market
+    # Stalk market (Kabu_price_c: 7 daily u16 prices + u16 pattern + 8B time)
     stalk_base=0x20480,      # Kabu_price_c struct
-    stalk_buy_offset=0x00,
-    stalk_sell_offset=0x04,
-    stalk_sell_count=14,
+    stalk_buy_offset=0x00,   # daily_price[0] = Sunday (Joan's buy price)
+    stalk_sell_offset=0x02,  # daily_price[1..6] = Mon-Sat sell prices
+    stalk_sell_count=6,      # 6 sell prices (Mon-Sat), NOT 14 half-days
     stalk_pattern_offset=0x0E,  # trade_market field (u16, not u32)
     stalk_pattern_max=2,     # Vanilla: 0-2 (Deluxe: 0-4)
 
@@ -512,7 +512,6 @@ ACCF_PROFILE = GameProfile(
     has_emotions=True,
     has_catalog=True,
     has_points=True,
-    has_museum=True,
 )
 
 
@@ -589,15 +588,11 @@ def detect_game_from_file(data: bytes) -> tuple[GameType, ContainerType, int]:
 
 
 def get_profile_for_game(game_type: GameType) -> GameProfile:
-    """Return the appropriate profile for a game type."""
+    """Return a mutable copy of the appropriate profile for a game type."""
     if game_type in (GameType.GC_VANILLA, GameType.GC_DELUXE):
-        return GameProfile(**{
-            f.name: getattr(GC_PROFILE, f.name)
-            for f in GC_PROFILE.__dataclass_fields__.values()
-        })
-    if game_type in (GameType.WII_ACCF, GameType.WII_ACCF_DELUXE):
-        return GameProfile(**{
-            f.name: getattr(ACCF_PROFILE, f.name)
-            for f in ACCF_PROFILE.__dataclass_fields__.values()
-        })
-    raise ValueError(f"No profile for game type: {game_type}")
+        src = GC_PROFILE
+    elif game_type in (GameType.WII_ACCF, GameType.WII_ACCF_DELUXE):
+        src = ACCF_PROFILE
+    else:
+        raise ValueError(f"No profile for game type: {game_type}")
+    return GameProfile(**{f.name: getattr(src, f.name) for f in fields(src)})

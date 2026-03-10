@@ -648,39 +648,61 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to open:\n{path}")
             return
 
-        # Checksum verification
-        crc_errors: list[str] = self.save_handler.check_all_crc()
-        if crc_errors:
-            detail = "\n".join(crc_errors)
-            QMessageBox.warning(
-                self,
-                "Checksum Warning",
-                f"The following checksum checks failed:\n\n{detail}\n\n"
-                "The file may be corrupted. Proceed with caution.",
-            )
-
-        self._set_file_dependent_state(True)
-        self._apply_game_type_restrictions()
-        self._enable_player_menus()
-        self._sync_settings_menus()
-        self._refresh_player_info()
-
-        # Detect Deluxe save and merge item database
+        # Detect Deluxe save early (before CRC warning, so we can contextualise)
         self._is_deluxe = False
         try:
             if self.save_handler.is_accf:
                 from deluxe_items import is_deluxe_save
                 self._is_deluxe = is_deluxe_save(self.save_handler)
             else:
-                # GC Deluxe is detected in SaveHandler._detect_gc_deluxe()
                 from game_profiles import GameType
                 self._is_deluxe = self.save_handler.game_type in (
                     GameType.GC_DELUXE, GameType.WII_ACCF_DELUXE,
                 )
         except Exception:
             pass
+
+        # Checksum verification with Deluxe-aware messaging
+        try:
+            crc_errors: list[str] = self.save_handler.check_all_crc()
+        except Exception:
+            crc_errors = ["(checksum computation failed — file may be truncated)"]
+        if crc_errors:
+            dlc_only = all("DLC" in e for e in crc_errors)
+            detail = "\n".join(crc_errors)
+            if dlc_only and self._is_deluxe:
+                QMessageBox.information(
+                    self,
+                    "DLC Checksum Notice",
+                    f"DLC checksum mismatch detected:\n\n{detail}\n\n"
+                    "This is expected for Deluxe / modded saves whose DLC "
+                    "region has been modified by the mod. Your save is fine.",
+                )
+            else:
+                msg = f"The following checksum checks failed:\n\n{detail}\n\n"
+                if self._is_deluxe and any("DLC" in e for e in crc_errors):
+                    non_dlc = [e for e in crc_errors if "DLC" not in e]
+                    msg += (
+                        "Note: DLC checksum mismatches are expected on "
+                        "Deluxe / modded saves.\n"
+                    )
+                    if non_dlc:
+                        msg += (
+                            "However, other checksums also failed — "
+                            "the file may be corrupted.\n"
+                        )
+                else:
+                    msg += "The file may be corrupted. Proceed with caution."
+                QMessageBox.warning(self, "Checksum Warning", msg)
+
         if self._is_deluxe and self.save_handler.is_accf:
             self._merge_deluxe_items()
+
+        self._set_file_dependent_state(True)
+        self._apply_game_type_restrictions()
+        self._enable_player_menus()
+        self._sync_settings_menus()
+        self._refresh_player_info()
 
         self._update_title_bar()
         self._update_status_bar()
