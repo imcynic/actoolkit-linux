@@ -8,7 +8,6 @@ aibohack.com documentation and EZ_DLC_Install format.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -238,7 +237,12 @@ class DlcEditorDialog(QDialog):
 
     def _populate_table(self):
         """Fill the table with all valid DLC slots."""
-        all_dlc = self.save_handler.get_all_dlc()
+        try:
+            all_dlc = self.save_handler.get_all_dlc()
+        except Exception as e:
+            self.summary_label.setText("DLC Items: error reading")
+            self.status_label.setText(f"Error loading DLC data: {e}")
+            return
 
         self.dlc_table.setRowCount(len(all_dlc))
         for row, entry in enumerate(all_dlc):
@@ -268,6 +272,9 @@ class DlcEditorDialog(QDialog):
 
     def _show_detail(self, slot: int):
         """Display details for the given DLC slot."""
+        if not isinstance(slot, int) or not 0 <= slot < DLC_SLOT_COUNT:
+            self._clear_detail()
+            return
         self._current_slot = slot
 
         try:
@@ -338,6 +345,9 @@ class DlcEditorDialog(QDialog):
             self._clear_detail()
             return
         slot = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(slot, int) or not 0 <= slot < DLC_SLOT_COUNT:
+            self._clear_detail()
+            return
         self._show_detail(slot)
 
     def _on_save_edits(self):
@@ -397,6 +407,22 @@ class DlcEditorDialog(QDialog):
             "DLC Files (*.bin *.dlc *.bitm);;All Files (*)",
         )
         if not path:
+            return
+
+        # Guard against reading excessively large files
+        import os
+        try:
+            file_size = os.path.getsize(path)
+        except OSError as e:
+            QMessageBox.critical(self, "Error", f"Cannot read file:\n{e}")
+            return
+        max_size = 0x2000  # DLC_SLOT_SIZE
+        if file_size > max_size * 2:
+            QMessageBox.warning(
+                self, "File Too Large",
+                f"File is {file_size:,} bytes, expected at most {max_size:,}.\n"
+                "This does not appear to be a valid DLC file.",
+            )
             return
 
         slot = self.save_handler.find_empty_dlc_slot()
