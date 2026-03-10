@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/mascot_logo.png" alt="ACToolkit Mascot" width="180">
+
 # ACToolkit Linux
 
 **Cross-platform Animal Crossing save editor for ACCF (Wii) and GameCube**

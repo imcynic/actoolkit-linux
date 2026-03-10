@@ -49,7 +49,7 @@ class PlayerInfoPanel(QGroupBox):
 
         # --- Header ---
         self.header_label = QLabel("No file loaded")
-        self.header_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.header_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #6BB0B0;")
         self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.header_label)
 
@@ -190,9 +190,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_window(self) -> None:
-        self.setWindowTitle("ACToolkit - Animal Crossing: City Folk Save Editor")
+        self.setWindowTitle("ACToolkit - Animal Crossing Save Editor")
         self.setMinimumSize(QSize(800, 600))
         self.resize(960, 640)
+        # Window icon (also set at QApplication level in actoolkit.py)
+        from pathlib import Path
+        icon_path = Path(__file__).resolve().parent.parent / "assets" / "actoolkit.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
     # ------------------------------------------------------------------
     # Menu bar
@@ -397,7 +402,7 @@ class MainWindow(QMainWindow):
         placeholder_layout = QVBoxLayout(placeholder)
         placeholder_label = QLabel("Open a save file to begin editing.")
         placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder_label.setStyleSheet("color: gray; font-size: 13px;")
+        placeholder_label.setStyleSheet("color: #8AACAC; font-size: 14px;")
         placeholder_layout.addWidget(placeholder_label)
 
         self.tab_widget.addTab(placeholder, "Overview")
@@ -1100,13 +1105,23 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_about(self) -> None:
+        from pathlib import Path
+        from urllib.parse import quote
+        mascot = Path(__file__).resolve().parent.parent / "assets" / "mascot_logo.png"
+        img_tag = ""
+        if mascot.exists():
+            uri = "file://" + quote(str(mascot))
+            img_tag = (
+                f'<div align="center"><img src="{uri}" width="128" height="128"></div>'
+            )
         QMessageBox.about(
             self,
             "About ACToolkit",
-            "<h3>ACToolkit v2.0.0</h3>"
-            "<p>Animal Crossing: City Folk Save Editor for Linux</p>"
-            "<p>Supports vanilla ACCF and ACCF Deluxe Edition v1.1.2</p>"
-            "<p>Built with PyQt6. Based on original ACToolkit by Virus (Game-Hackers.com).</p>",
+            f"{img_tag}"
+            "<h3 style='text-align:center;'>ACToolkit v2.0.0</h3>"
+            "<p style='text-align:center;'>Animal Crossing Save Editor for Linux</p>"
+            "<p>Supports ACCF (Wii), GameCube, and Deluxe mod editions.</p>"
+            "<p>Built with PyQt6. Based on original ACToolkit by Virus.</p>",
         )
 
     # ------------------------------------------------------------------
