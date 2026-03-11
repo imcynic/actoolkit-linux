@@ -1006,7 +1006,12 @@ class MainWindow(QMainWindow):
                         break
         except Exception:
             pass
-        dlg = NpcEditorDialog(self.save_handler, npc_db=npc_db, parent=self)
+        dlg = NpcEditorDialog(
+            self.save_handler,
+            npc_db=npc_db,
+            is_deluxe=getattr(self, "_is_deluxe", False),
+            parent=self,
+        )
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._mark_modified()
 

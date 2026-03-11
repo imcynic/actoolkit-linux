@@ -167,6 +167,11 @@ class GameProfile:
     v_catchphrase: int = 0
     v_catchphrase_max: int = 10
     v_shirt: int = 0
+    v_carpet: int = -1           # Flooring (-1 = not supported)
+    v_wallpaper: int = -1        # Wallpaper (-1 = not supported)
+    v_umbrella: int = -1         # Umbrella (-1 = not supported)
+    v_furniture: int = -1        # Base of 11 × u16 array (-1 = not supported)
+    v_kk_song: int = -1          # K.K. Song (-1 = not supported)
     v_id2: int = -1              # Second NPC ID field (ACCF only, -1 = none)
 
     # --- Stalk market (rel:save) ---
@@ -462,6 +467,11 @@ ACCF_PROFILE = GameProfile(
     v_catchphrase=0x18EC,
     v_catchphrase_max=10,
     v_shirt=0x1826,
+    v_carpet=0x1828,
+    v_wallpaper=0x182A,
+    v_umbrella=0x182C,
+    v_furniture=0x182E,
+    v_kk_song=0x1842,
     v_id2=0x2308,
 
     # Stalk market

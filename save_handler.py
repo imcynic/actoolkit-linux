@@ -1648,6 +1648,100 @@ class SaveHandler:
         v_shirt = self.profile.v_shirt if self.profile else self._VOFF_SHIRT
         return self.read_u16(base + v_shirt)
 
+    def set_villager_personality(self, slot: int, personality: int) -> None:
+        """Write the in-save personality byte for a villager slot (0-5)."""
+        if not 0 <= personality <= 5:
+            raise ValueError(f"Personality must be 0-5, got {personality}")
+        base = self._villager_offset(slot)
+        v_pers = self.profile.v_personality if self.profile else self._VOFF_PERSONALITY
+        self.write_u8(base + v_pers, personality)
+
+    def set_villager_shirt(self, slot: int, item_id: int) -> None:
+        """Write the shirt item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        v_shirt = self.profile.v_shirt if self.profile else self._VOFF_SHIRT
+        self.write_u16(base + v_shirt, item_id)
+
+    def _v_field_offset(self, field: str) -> int:
+        """Resolve a villager field offset from profile or legacy constants."""
+        if self.profile:
+            val = getattr(self.profile, field, -1)
+            if val < 0:
+                raise ValueError(f"Field '{field}' not supported for this game type")
+            return val
+        legacy = {
+            "v_carpet": self._VOFF_CARPET,
+            "v_wallpaper": self._VOFF_WALLPAPER,
+            "v_umbrella": self._VOFF_UMBRELLA,
+            "v_furniture": self._VOFF_FURNITURE,
+            "v_kk_song": self._VOFF_KK_SONG,
+        }
+        val = legacy.get(field, -1)
+        if val < 0:
+            raise ValueError(f"Field '{field}' not supported for this game type")
+        return val
+
+    def get_villager_umbrella(self, slot: int) -> int:
+        """Read the umbrella item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        return self.read_u16(base + self._v_field_offset("v_umbrella"))
+
+    def set_villager_umbrella(self, slot: int, item_id: int) -> None:
+        """Write the umbrella item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        self.write_u16(base + self._v_field_offset("v_umbrella"), item_id)
+
+    def get_villager_wallpaper(self, slot: int) -> int:
+        """Read the wallpaper item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        return self.read_u16(base + self._v_field_offset("v_wallpaper"))
+
+    def set_villager_wallpaper(self, slot: int, item_id: int) -> None:
+        """Write the wallpaper item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        self.write_u16(base + self._v_field_offset("v_wallpaper"), item_id)
+
+    def get_villager_carpet(self, slot: int) -> int:
+        """Read the flooring item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        return self.read_u16(base + self._v_field_offset("v_carpet"))
+
+    def set_villager_carpet(self, slot: int, item_id: int) -> None:
+        """Write the flooring item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        self.write_u16(base + self._v_field_offset("v_carpet"), item_id)
+
+    def get_villager_kk_song(self, slot: int) -> int:
+        """Read the K.K. Song item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        return self.read_u16(base + self._v_field_offset("v_kk_song"))
+
+    def set_villager_kk_song(self, slot: int, item_id: int) -> None:
+        """Write the K.K. Song item ID for a villager slot."""
+        base = self._villager_offset(slot)
+        self.write_u16(base + self._v_field_offset("v_kk_song"), item_id)
+
+    def get_villager_furniture(self, slot: int) -> list[int]:
+        """Read the 11 furniture item IDs for a villager slot."""
+        base = self._villager_offset(slot)
+        furn_off = base + self._v_field_offset("v_furniture")
+        return [self.read_u16(furn_off + i * 2) for i in range(11)]
+
+    def set_villager_furniture(self, slot: int, items: list[int]) -> None:
+        """Write the 11 furniture item IDs for a villager slot."""
+        if len(items) != 11:
+            raise ValueError(f"Expected 11 furniture items, got {len(items)}")
+        base = self._villager_offset(slot)
+        furn_off = base + self._v_field_offset("v_furniture")
+        for i, item_id in enumerate(items):
+            self.write_u16(furn_off + i * 2, item_id)
+
+    def supports_villager_room(self) -> bool:
+        """Check if the current game type supports per-villager room editing."""
+        if self.profile:
+            return self.profile.v_furniture >= 0
+        return not self.is_gc
+
     # ======================================================================
     # Stalk Market (turnip prices)
     # ======================================================================
