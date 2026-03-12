@@ -33,6 +33,7 @@ class PlayerInfoPanel(QGroupBox):
     drawers_requested = pyqtSignal()
     appearance_requested = pyqtSignal()
     emotions_requested = pyqtSignal()
+    town_name_set_requested = pyqtSignal()
     house_requested = pyqtSignal(str)  # room letter A/B/C/D
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -92,6 +93,10 @@ class PlayerInfoPanel(QGroupBox):
         stats_grid.addWidget(QLabel("Town:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.town_label = QLabel("---")
         stats_grid.addWidget(self.town_label, row, 1)
+        self.town_btn = QPushButton("Set")
+        self.town_btn.setFixedWidth(48)
+        self.town_btn.clicked.connect(self.town_name_set_requested)
+        stats_grid.addWidget(self.town_btn, row, 2)
 
         row += 1
         # Donations
@@ -490,6 +495,7 @@ class MainWindow(QMainWindow):
         self.player_panel.wallet_set_requested.connect(self._on_set_wallet)
         self.player_panel.bank_set_requested.connect(self._on_set_bank)
         self.player_panel.points_set_requested.connect(self._on_set_points)
+        self.player_panel.town_name_set_requested.connect(self._on_set_town_name)
         self.player_panel.pockets_requested.connect(self._on_pockets)
         self.player_panel.drawers_requested.connect(self._on_drawers)
         self.player_panel.appearance_requested.connect(self._on_appearance)
@@ -860,6 +866,29 @@ class MainWindow(QMainWindow):
             self._refresh_player_info()
             self._mark_modified()
 
+    @pyqtSlot()
+    def _on_set_town_name(self) -> None:
+        if not self.save_handler:
+            return
+        current = self.save_handler.get_town_name(self.current_player)
+        max_len = self.save_handler.profile.p_name_max if self.save_handler.profile else 8
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(
+            self, "Set Town Name",
+            f"Town name (max {max_len} characters):",
+            text=current,
+        )
+        if ok and name and name.strip():
+            name = name.strip()[:max_len]
+            try:
+                self.save_handler.set_town_name(name, self.current_player)
+            except Exception as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "Error", f"Failed to set town name:\n{e}")
+                return
+            self._refresh_player_info()
+            self._mark_modified()
+
     # ------------------------------------------------------------------
     # Nook's
     # ------------------------------------------------------------------
@@ -1144,7 +1173,11 @@ class MainWindow(QMainWindow):
         if not self.save_handler:
             return
         from gui.face_editor import FaceEditorDialog
-        dlg = FaceEditorDialog(self.save_handler, self.current_player, parent=self)
+        dlg = FaceEditorDialog(
+            self.save_handler, self.current_player,
+            is_deluxe=getattr(self, "_is_deluxe", False),
+            parent=self,
+        )
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._mark_modified()
 

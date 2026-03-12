@@ -2,7 +2,7 @@
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget,
-    QPushButton, QSpinBox, QLabel, QGroupBox,
+    QPushButton, QSpinBox, QLabel, QGroupBox, QComboBox,
     QToolButton, QButtonGroup, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QRect, QSize
@@ -187,6 +187,16 @@ class GrassEditorDialog(QDialog):
         self.info_label.setWordWrap(True)
         controls.addWidget(self.info_label)
 
+        # Grass pattern (style) selector
+        pattern_group = QGroupBox("Grass Pattern")
+        pattern_layout = QVBoxLayout(pattern_group)
+        self.pattern_combo = QComboBox()
+        self.pattern_combo.addItem("Triangle", 0)
+        self.pattern_combo.addItem("Circle", 1)
+        self.pattern_combo.addItem("Square", 2)
+        pattern_layout.addWidget(self.pattern_combo)
+        controls.addWidget(pattern_group)
+
         # Preset buttons
         preset_group = QGroupBox("Presets")
         preset_layout = QVBoxLayout(preset_group)
@@ -218,9 +228,14 @@ class GrassEditorDialog(QDialog):
         layout.addLayout(controls)
 
     def _load_data(self):
-        """Load grass data from save_handler into the grid widget."""
+        """Load grass data and pattern from save_handler."""
         data = self.save_handler.get_grass_data()
         self.grid_widget.set_data(data)
+
+        style = self.save_handler.get_grass_style()
+        idx = self.pattern_combo.findData(style)
+        if idx >= 0:
+            self.pattern_combo.setCurrentIndex(idx)
 
     def _on_tool_changed(self, button_id, checked):
         if checked:
@@ -244,9 +259,12 @@ class GrassEditorDialog(QDialog):
         self.grid_widget.set_data([0] * CELL_COUNT)
 
     def _apply(self):
-        """Write the modified grass data back to save_handler and accept."""
+        """Write the modified grass data and pattern back to save_handler and accept."""
         try:
             self.save_handler.set_grass_data(self.grid_widget.data[:CELL_COUNT])
+            pattern = self.pattern_combo.currentData()
+            if pattern is not None:
+                self.save_handler.set_grass_style(pattern)
         except Exception as e:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Failed to write grass data:\n{e}")

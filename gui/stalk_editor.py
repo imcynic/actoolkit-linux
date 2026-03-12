@@ -44,6 +44,11 @@ class StalkEditorDialog(QDialog):
         self.save_handler = save_handler
         self.setWindowTitle("Stalk Market Editor")
 
+        # GC saves use 6 daily prices; ACCF/Deluxe use 14 half-day prices
+        self._is_gc = save_handler.is_gc
+        self._sell_count = save_handler.profile.stalk_sell_count if save_handler.profile else 14
+        self._half_day = self._sell_count > 6
+
         self._build_ui()
         self._load_data()
 
@@ -69,9 +74,17 @@ class StalkEditorDialog(QDialog):
         sell_group = QGroupBox("Nook's Sell Prices")
         sell_layout = QVBoxLayout(sell_group)
 
-        self.price_table = QTableWidget(7, 2)
-        self.price_table.setHorizontalHeaderLabels(["AM", "PM"])
-        self.price_table.setVerticalHeaderLabels(DAYS)
+        if self._half_day:
+            # ACCF/Deluxe: 14 half-day prices (7 days x AM/PM)
+            self.price_table = QTableWidget(7, 2)
+            self.price_table.setHorizontalHeaderLabels(["AM", "PM"])
+            self.price_table.setVerticalHeaderLabels(DAYS)
+        else:
+            # GC: 6 daily prices (Mon-Sat, 1 column)
+            self.price_table = QTableWidget(6, 1)
+            self.price_table.setHorizontalHeaderLabels(["Price"])
+            self.price_table.setVerticalHeaderLabels(DAYS[1:])  # Mon-Sat
+
         self.price_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
@@ -84,9 +97,11 @@ class StalkEditorDialog(QDialog):
 
         # Create a QSpinBox for every cell
         self.price_spins: list[list[QSpinBox]] = []
-        for row in range(7):
+        num_rows = 7 if self._half_day else 6
+        num_cols = 2 if self._half_day else 1
+        for row in range(num_rows):
             row_spins: list[QSpinBox] = []
-            for col in range(2):
+            for col in range(num_cols):
                 spin = QSpinBox()
                 spin.setRange(0, 999)
                 spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -127,12 +142,20 @@ class StalkEditorDialog(QDialog):
         # Buy price
         self.buy_spin.setValue(self.save_handler.get_turnip_buy_price())
 
-        # Sell prices: 14 values ordered Sun AM, Sun PM, Mon AM, Mon PM, ...
+        # Sell prices
         prices = self.save_handler.get_turnip_sell_prices()
-        for i, price in enumerate(prices):
-            row = i // 2
-            col = i % 2
-            self.price_spins[row][col].setValue(price)
+        if self._half_day:
+            # 14 values: Sun AM, Sun PM, Mon AM, Mon PM, ...
+            for i, price in enumerate(prices):
+                row = i // 2
+                col = i % 2
+                if row < len(self.price_spins) and col < len(self.price_spins[row]):
+                    self.price_spins[row][col].setValue(price)
+        else:
+            # 6 values: Mon, Tue, Wed, Thu, Fri, Sat
+            for i, price in enumerate(prices):
+                if i < len(self.price_spins):
+                    self.price_spins[i][0].setValue(price)
 
         # Pattern
         pattern = self.save_handler.get_turnip_pattern()
@@ -151,9 +174,13 @@ class StalkEditorDialog(QDialog):
 
             # Collect sell prices from table
             prices: list[int] = []
-            for row in range(7):
-                for col in range(2):
-                    prices.append(self.price_spins[row][col].value())
+            if self._half_day:
+                for row in range(7):
+                    for col in range(2):
+                        prices.append(self.price_spins[row][col].value())
+            else:
+                for row in range(6):
+                    prices.append(self.price_spins[row][0].value())
             self.save_handler.set_turnip_sell_prices(prices)
 
             # Write pattern

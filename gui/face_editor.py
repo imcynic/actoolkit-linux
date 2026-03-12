@@ -9,10 +9,11 @@ from PyQt6.QtWidgets import (
 class FaceEditorDialog(QDialog):
     """Dialog for editing player face, hair, skin, and hat appearance."""
 
-    def __init__(self, save_handler, player, parent=None):
+    def __init__(self, save_handler, player, is_deluxe=False, parent=None):
         super().__init__(parent)
         self.save_handler = save_handler
         self.player = player
+        self._is_deluxe = is_deluxe
 
         self.setWindowTitle(f"Appearance Editor - Player {player + 1}")
         self.setMinimumWidth(360)
@@ -114,6 +115,13 @@ class FaceEditorDialog(QDialog):
         self._update_tan_label()
         self._update_hat_label()
 
+        # Deluxe handles hair color and hats differently; disable editing
+        if self._is_deluxe:
+            self.hair_color_combo.setEnabled(False)
+            self.hair_color_combo.setToolTip("Not editable on Deluxe saves")
+            self.hat_combo.setEnabled(False)
+            self.hat_combo.setToolTip("Not editable on Deluxe saves")
+
     def _update_face_label(self):
         val = self.face_combo.currentData()
         self.face_label.setText(f"[{val}]")
@@ -139,9 +147,11 @@ class FaceEditorDialog(QDialog):
         try:
             self.save_handler.set_face(self.player, self.face_combo.currentData())
             self.save_handler.set_hair(self.player, self.hair_combo.currentData())
-            self.save_handler.set_hair_color(self.player, self.hair_color_combo.currentData())
+            if not self._is_deluxe:
+                self.save_handler.set_hair_color(self.player, self.hair_color_combo.currentData())
             self.save_handler.set_tan(self.player, self.tan_combo.currentData())
-            self.save_handler.set_hat(self.player, self.hat_combo.currentData())
+            if not self._is_deluxe:
+                self.save_handler.set_hat(self.player, self.hat_combo.currentData())
         except Exception as e:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Failed to write appearance:\n{e}")

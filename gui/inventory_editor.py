@@ -29,7 +29,7 @@ from items_db import ITEMS, CATEGORIES
 
 MODE_CONFIG = {
     0: {"title": "Pockets",      "rows": 3,  "cols": 5, "count": 15},
-    1: {"title": "Drawers",      "rows": 32, "cols": 5, "count": 160},
+    1: {"title": "Drawers",      "rows": 8, "cols": 20, "count": 160},
     2: {"title": "Lost & Found", "rows": 2,  "cols": 6, "count": 12},
     3: {"title": "Recycle Bin",  "rows": 2,  "cols": 6, "count": 12},
     4: {"title": "Nook's Store", "rows": 6,  "cols": 6, "count": 36},
@@ -198,6 +198,14 @@ class InventoryEditorDialog(QDialog):
         self.grid.verticalHeader().setDefaultSectionSize(28)
         self.grid.setFont(QFont("Monospace", 8))
         self.grid.cellClicked.connect(self._on_cell_clicked)
+
+        # Drawers: label sections (4 drawers of 5 columns each)
+        if self.imode == 1 and self.grid_cols == 20:
+            headers = []
+            for section in range(4):
+                for col in range(5):
+                    headers.append(f"D{section + 1}-{col + 1}")
+            self.grid.setHorizontalHeaderLabels(headers)
 
         left_layout.addWidget(self.grid, stretch=1)
 

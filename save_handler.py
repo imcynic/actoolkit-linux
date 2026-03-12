@@ -857,6 +857,28 @@ class SaveHandler:
             return self.read_string(po + self.profile.p_town_name, self.profile.p_name_max)
         return self.read_string(0x7EE4 + po, 8)
 
+    def set_town_name(self, name: str, p: int = 0) -> None:
+        if not name:
+            return
+        if self.is_gc and self.profile and self.profile.town_name_offset:
+            name_max = self.profile.p_name_max if self.profile else 8
+            self.write_string(self._soff(self.profile.town_name_offset), name, name_max)
+            # Also update per-player town name fields so they stay in sync
+            for i in range(self.profile.player_count):
+                po = self.player_offset(i)
+                if self.player_exists(i):
+                    self.write_string(po + self.profile.p_town_name, name, name_max)
+            return
+        # ACCF: update all existing players' town name fields
+        name_max = self.profile.p_name_max if self.profile else 8
+        for i in range(self.profile.player_count if self.profile else 4):
+            po = self.player_offset(i)
+            if self.player_exists(i):
+                if self.profile:
+                    self.write_string(po + self.profile.p_town_name, name, name_max)
+                else:
+                    self.write_string(0x7EE4 + po, name, 8)
+
     def get_town_id(self, p: int = 0) -> int:
         if self.is_gc and self.profile and self.profile.town_id_offset:
             return self.read_u16(self._soff(self.profile.town_id_offset))
