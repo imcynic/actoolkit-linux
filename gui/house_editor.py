@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QTabWidget,
     QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
     QPushButton, QLabel, QLineEdit, QAbstractItemView, QHeaderView,
-    QWidget, QToolButton, QButtonGroup, QScrollArea,
+    QWidget, QToolButton, QButtonGroup,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QBrush, QFont
@@ -212,11 +212,11 @@ class HouseEditorDialog(QDialog):
 
             # Labels above each grid
             left_col = QVBoxLayout()
-            left_col.addWidget(QLabel(f"Left Side"))
+            left_col.addWidget(QLabel("Left Side"))
             left_col.addWidget(left_grid, stretch=1)
 
             right_col = QVBoxLayout()
-            right_col.addWidget(QLabel(f"Right Side"))
+            right_col.addWidget(QLabel("Right Side"))
             right_col.addWidget(right_grid, stretch=1)
 
             page_layout.addLayout(left_col, stretch=1)

@@ -16,12 +16,11 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QPushButton, QLabel, QComboBox, QSpinBox,
+    QTableWidget, QTableWidgetItem, QPushButton, QLabel, QComboBox, QSpinBox,
     QGroupBox, QAbstractItemView, QMessageBox,
     QWidget, QToolButton, QButtonGroup, QFormLayout,
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush, QFont
 
 from save_handler import SaveHandler
@@ -209,7 +208,7 @@ class BuildingEditorDialog(QDialog):
     def _populate_table(self):
         # Buildings
         self.bld_table.blockSignals(True)
-        for i in range(35):
+        for i in range(min(35, len(self.buildings))):
             x, y = self.buildings[i]
             exists = (x != 0 or y != 0)
             name = self.save_handler.get_building_name(i)
@@ -231,7 +230,7 @@ class BuildingEditorDialog(QDialog):
 
         # Signs
         self.sign_table.blockSignals(True)
-        for i in range(100):
+        for i in range(min(100, len(self.signs))):
             x, y = self.signs[i]
             exists = (x != 0 or y != 0)
             gx, gy = (_grid_coord(x), _grid_coord(y)) if exists else (0, 0)

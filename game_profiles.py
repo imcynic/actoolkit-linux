@@ -7,6 +7,7 @@ data within the save file.
 
 Supported games:
   - Animal Crossing (GameCube, NTSC-U: GAFE)
+  - Doubutsu no Mori e+ (GameCube, JP: GAEJ / fan translation: GAEE)
   - Animal Crossing: City Folk (Wii: RUUE / ACCF)
 
 Offsets marked "rel:player" are relative to the player struct start.
@@ -16,7 +17,7 @@ Offsets marked "rel:villager" are relative to the villager struct start.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from enum import Enum, auto
 
 
@@ -27,6 +28,7 @@ from enum import Enum, auto
 class GameType(Enum):
     GC_VANILLA = auto()       # Animal Crossing (GAFE/GAFP/GAFU)
     GC_DELUXE = auto()        # Animal Crossing Deluxe (GAFE modded)
+    GC_EPLUS = auto()         # Doubutsu no Mori e+ (GAEJ/GAEE)
     WII_ACCF = auto()         # Animal Crossing: City Folk
     WII_ACCF_DELUXE = auto()  # ACCF Deluxe Edition
 
@@ -48,7 +50,8 @@ class ContainerType(Enum):
 
 class StringEncoding(Enum):
     UTF16_BE = auto()     # ACCF: 2 bytes per char, big-endian UTF-16
-    GC_CUSTOM = auto()    # GC AC: 1 byte per char, custom encoding
+    GC_CUSTOM = auto()    # GC AC: 1 byte per char, custom encoding (Latin)
+    GC_EPLUS = auto()     # DnM e+: 1 byte per char, custom encoding (Japanese)
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +371,147 @@ GC_PROFILE = GameProfile(
 
 
 # ---------------------------------------------------------------------------
+# Doubutsu no Mori e+ profile (GAEJ / GAEE)
+# ---------------------------------------------------------------------------
+
+EPLUS_PROFILE = GameProfile(
+    game_type=GameType.GC_EPLUS,
+    display_name="Doubutsu no Mori e+ (GameCube)",
+
+    # Save metadata
+    save_payload_size=0x2E000,
+    string_encoding=StringEncoding.GC_EPLUS,
+    checksum_type=ChecksumType.UINT16_SUM,
+    is_duplicated=True,
+    empty_item=0x0000,
+
+    # Checksum
+    checksum_offset=0x12,
+
+    # Player (rel:save)
+    player_start=0x1C0,
+    player_stride=0x26A0,
+    player_count=4,
+
+    # Player fields (rel:player)
+    p_name=0x00,
+    p_name_max=6,            # e+ uses 6-byte names
+    p_town_name=0x06,
+    p_wallet=0x94,
+    p_bank=0x11B4,           # Savings at post office
+    p_debt=0x98,             # Tom Nook mortgage
+    p_pockets=0x64,
+    p_pockets_count=15,
+    p_face=0x11,             # Face type byte
+    p_hair=0x11,             # e+: face byte encodes hair too (combined)
+    p_hair_color=0x11,       # e+: no separate hair color
+    p_tan=0x2348,            # Sunburn rank
+    p_hat=0x00,              # e+: no separate hat field
+    p_shirt=0xFF6,           # Equipped shirt
+    p_held_item=0x874,       # Currently held item
+    p_emotions=0x00,         # e+ doesn't have equippable emotions
+    p_emotion_count=0,
+    p_catalog=0x00,          # e+ catalog not supported yet
+
+    # Global town name (rel:save)
+    town_name_offset=0x14,
+    town_id_offset=0x1C,
+
+    # Town items (rel:save)
+    town_data_offset=0x184C0,
+    town_data_size=0x3C00,
+    town_grid_width=16,       # 16 items per acre row
+    town_grid_height=16,      # 16 rows per acre
+    town_item_count=7680,     # 30 acres x 256 items
+    acre_data_offset=0x1C0C0,
+    acre_count=70,
+    acre_x_count=7,
+    acre_y_count=10,
+    grass_data_offset=0,      # e+: no grass wear
+    grass_data_size=0,
+    grass_type_offset=0x24484,
+    buried_data_offset=0x22B1C,
+    buried_data_size=0x3C0,
+
+    # Nook's shop (rel:save)
+    nook_style_offset=0x22302,
+    nook_items_offset=0,      # Not fully mapped yet
+    nook_item_count=0,
+    nook_item_stride=0,
+
+    # Gate
+    gate_style_offset=0,
+
+    # Houses (rel:save)
+    house_start=0xA340,
+    house_stride=0x1A28,      # 0x30 header + 3 rooms x 0x8A8
+    house_count=4,
+    room_count=3,             # Entry room, second floor, basement
+    room_stride=0x8A8,
+
+    # Villagers (rel:save)
+    villager_start=0x1C150,
+    villager_stride=0x680,
+    villager_count=15,
+
+    # Villager fields (rel:villager)
+    v_exists=0x00,            # e+: villager_id != 0 means occupied
+    v_id=0x00,                # Villager ID is at offset 0 (u16)
+    v_personality=0x0B,
+    v_catchphrase=0x595,
+    v_catchphrase_max=4,      # e+ has shorter catchphrases
+    v_shirt=0x5DA,
+    v_id2=-1,                 # No second ID field
+
+    # Stalk market (Kabu_price_c at save+0x223C8)
+    stalk_base=0x223C8,
+    stalk_buy_offset=0x00,   # Sunday (Joan's buy price)
+    stalk_sell_offset=0x02,  # Mon-Sat sell prices
+    stalk_sell_count=6,
+    stalk_pattern_offset=0x0E,
+    stalk_pattern_max=2,
+
+    # Patterns (rel:player)
+    pattern_base=0x11C0,
+    pattern_stride=0x220,
+    pattern_count=8,
+    pat_pixels=0x20,          # Pixel data at +0x20
+    pat_pixels_size=0x200,    # 32x32 @ 4bpp
+    pat_palette=0x0A,         # 1-byte palette index
+    pat_title=0x00,           # Pattern name at +0x00
+    pat_title_size=10,        # 10 bytes (1 byte per char)
+    pat_creator=0x00,         # No separate creator name
+    pat_creator_size=0,
+
+    # Letters - e+ mail not implemented yet
+    letter_base=0x00,
+    letter_stride=0x00,
+    letter_count=0,
+    has_letters=False,
+
+    # Drawers - e+ has no dresser storage
+    drawers_base=0,
+    drawers_per_player_stride=0,
+    drawers_count=0,
+    drawers_is_global=False,
+
+    # Lost & Found
+    lost_found_offset=0,
+    lost_found_count=0,
+    recycle_offset=0,
+    recycle_count=0,
+
+    # Feature flags
+    has_dlc=False,
+    has_island=True,
+    has_emotions=False,       # e+ doesn't have equippable emotions
+    has_catalog=False,        # e+ catalog not implemented
+    has_points=False,
+    has_museum=False,         # e+ museum not implemented yet
+)
+
+
+# ---------------------------------------------------------------------------
 # ACCF (Wii) profile
 # ---------------------------------------------------------------------------
 
@@ -529,11 +673,18 @@ ACCF_PROFILE = GameProfile(
 # Container format detection tables
 # ---------------------------------------------------------------------------
 
-# GC container: data start offsets by format
+# GC container: data start offsets by format (GAFE/GAFP/GAFU)
 GC_CONTAINER_OFFSETS = {
     ContainerType.GCI: 0x26040,
     ContainerType.GCS: 0x26150,
     ContainerType.GC_RAW: 0x30000,
+}
+
+# e+ container: data start offsets (smaller banner area)
+EPLUS_CONTAINER_OFFSETS = {
+    ContainerType.GCI: 0x10040,
+    ContainerType.GCS: 0x10150,
+    ContainerType.GC_RAW: 0x1A000,
 }
 
 # Expected file sizes for each container format
@@ -546,6 +697,7 @@ FILE_SIZE_MAP: dict[int, tuple[ContainerType, str]] = {
 
 # Game IDs
 GC_GAME_IDS = {"GAFE", "GAFP", "GAFU"}  # US, PAL, AU
+EPLUS_GAME_IDS = {"GAEJ", "GAEE"}        # JP e+, fan translation
 
 
 # ---------------------------------------------------------------------------
@@ -570,18 +722,22 @@ def detect_game_from_file(data: bytes) -> tuple[GameType, ContainerType, int]:
     if size == 0x47A0DA:
         return GameType.WII_ACCF, ContainerType.RAW, 0
 
-    # GC .gci format
+    # GC .gci format (shared size for GAFE and GAEJ)
     if size == 0x72040:
         game_id = data[0:4].decode("ascii", errors="replace")
         if game_id in GC_GAME_IDS:
             return GameType.GC_VANILLA, ContainerType.GCI, 0x26040
+        if game_id in EPLUS_GAME_IDS:
+            return GameType.GC_EPLUS, ContainerType.GCI, 0x10040
         raise ValueError(f"Unrecognized GCI game ID: {game_id!r}")
 
-    # GC .gcs format
+    # GC .gcs format (shared size for GAFE and GAEJ)
     if size == 0x72150:
         game_id = data[0x110:0x114].decode("ascii", errors="replace")
         if game_id in GC_GAME_IDS:
             return GameType.GC_VANILLA, ContainerType.GCS, 0x26150
+        if game_id in EPLUS_GAME_IDS:
+            return GameType.GC_EPLUS, ContainerType.GCS, 0x10150
         raise ValueError(f"Unrecognized GCS game ID: {game_id!r}")
 
     # GC raw/Nintendont format
@@ -589,11 +745,14 @@ def detect_game_from_file(data: bytes) -> tuple[GameType, ContainerType, int]:
         game_id = data[0x2000:0x2004].decode("ascii", errors="replace")
         if game_id in GC_GAME_IDS:
             return GameType.GC_VANILLA, ContainerType.GC_RAW, 0x30000
+        if game_id in EPLUS_GAME_IDS:
+            return GameType.GC_EPLUS, ContainerType.GC_RAW, 0x1A000
         raise ValueError(f"Unrecognized raw GC game ID: {game_id!r}")
 
     raise ValueError(
         f"Unrecognized save file size: {size} (0x{size:X}) bytes. "
-        f"Expected ACCF (0x40F340) or GC (.gci=0x72040, .gcs=0x72150, raw=0x200000)."
+        f"Expected ACCF (0x40F340), GC (.gci=0x72040, .gcs=0x72150, raw=0x200000), "
+        f"or DnM e+ (same sizes as GC with GAEJ/GAEE game ID)."
     )
 
 
@@ -601,6 +760,8 @@ def get_profile_for_game(game_type: GameType) -> GameProfile:
     """Return a mutable copy of the appropriate profile for a game type."""
     if game_type in (GameType.GC_VANILLA, GameType.GC_DELUXE):
         src = GC_PROFILE
+    elif game_type == GameType.GC_EPLUS:
+        src = EPLUS_PROFILE
     elif game_type in (GameType.WII_ACCF, GameType.WII_ACCF_DELUXE):
         src = ACCF_PROFILE
     else:

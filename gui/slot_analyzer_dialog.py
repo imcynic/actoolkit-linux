@@ -7,13 +7,13 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTreeWidget, QTreeWidgetItem, QProgressBar, QWidget,
-    QHeaderView, QSizePolicy,
+    QHeaderView,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
 from save_handler import SaveHandler
-from slot_analyzer import analyze_save, SlotInfo, AnalysisResult
+from slot_analyzer import analyze_save, SlotInfo
 
 
 # -- Colour thresholds for the usage bars ----------------------------------

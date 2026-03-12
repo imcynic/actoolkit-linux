@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QIcon
+from PyQt6.QtGui import QImage, QPixmap, QColor, QIcon
 
 from save_handler import SaveHandler
 

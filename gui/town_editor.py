@@ -10,13 +10,12 @@ import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget, QScrollArea, QTreeWidget,
     QTreeWidgetItem, QLabel, QRadioButton, QButtonGroup, QGroupBox,
-    QMenuBar, QFileDialog, QMessageBox, QCheckBox, QSplitter, QFrame,
-    QLineEdit, QApplication, QSizePolicy,
+    QMenuBar, QFileDialog, QMessageBox, QSplitter, QFrame,
+    QLineEdit, QApplication,
 )
-from PyQt6.QtCore import Qt, QRect, QPoint, QSize, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal
 from PyQt6.QtGui import (
-    QPainter, QPixmap, QColor, QPen, QBrush, QAction, QFont,
-    QWheelEvent, QMouseEvent, QPaintEvent, QResizeEvent, QKeyEvent,
+    QPainter, QPixmap, QColor, QPen, QAction, QWheelEvent, QMouseEvent, QPaintEvent, QKeyEvent,
 )
 
 # ---------------------------------------------------------------------------
@@ -349,8 +348,8 @@ class TownGridWidget(QWidget):
     def _paint_grid_for_cell(self, p: QPainter, x: int, y: int):
         """Repaint grid lines touching a single cell after it was redrawn."""
         cp = self._cell_px
-        total_w = GRID_W * cp
-        total_h = GRID_H * cp
+        GRID_W * cp
+        GRID_H * cp
 
         if self._show_grid and cp >= 5:
             pen = QPen(QColor(80, 80, 80, 40))

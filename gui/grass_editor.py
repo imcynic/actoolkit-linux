@@ -60,6 +60,10 @@ class GrassGridWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
+        if not self.data or len(self.data) < GRID_SIZE * GRID_SIZE:
+            painter.end()
+            return
+
         rect = event.rect()
         cs = self.cell_size
 

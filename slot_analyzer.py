@@ -7,7 +7,6 @@ capacity.  Works for both ACCF (Wii) and GC (vanilla/Deluxe).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from save_handler import SaveHandler, CATALOG_RANGES, DLC_SLOT_COUNT
 

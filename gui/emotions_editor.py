@@ -4,7 +4,6 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QComboBox, QPushButton, QGroupBox,
 )
-from PyQt6.QtCore import Qt
 
 
 EMOTION_NAMES = [

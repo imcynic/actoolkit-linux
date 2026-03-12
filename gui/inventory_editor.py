@@ -9,17 +9,16 @@ Supports multiple inventory modes:
   4 = Nook's Store (6x6 = 36 items)
 """
 
-import sys
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QSplitter,
+    QDialog, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
     QPushButton, QLabel, QLineEdit, QAbstractItemView, QHeaderView,
-    QWidget, QScrollArea, QToolButton, QButtonGroup, QMessageBox,
+    QWidget, QToolButton, QButtonGroup, QMessageBox,
 )
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QColor, QBrush, QFont, QIcon
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QBrush, QFont
 
 from items_db import ITEMS, CATEGORIES
 

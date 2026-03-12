@@ -33,15 +33,16 @@ from save_handler import SaveHandler
 
 # Try to import npc_data for pack.bin parsing
 try:
-    from npc_data import NpcDatabase, NpcEntry, load_pack_bin, PERSONALITY_NAMES, SPECIES_NAMES
+    from npc_data import NpcDatabase, load_pack_bin, PERSONALITY_NAMES, SPECIES_NAMES
 except ImportError:
     NpcDatabase = None
 
 # Try to import villager data as fallback when pack.bin is not available
 try:
-    from vanilla_npcs import VANILLA_VILLAGERS
+    from vanilla_npcs import VANILLA_VILLAGERS, GC_VILLAGER_NAMES
 except ImportError:
     VANILLA_VILLAGERS = {}
+    GC_VILLAGER_NAMES = {}
 
 try:
     from deluxe_items import DELUXE_VILLAGERS
@@ -792,7 +793,7 @@ class NpcEditorDialog(QDialog):
         entry = self._get_npc_entry(new_id)
         name = entry.name_en if entry else f"#{new_id}"
 
-        old_id = self.resident_ids[row]
+        self.resident_ids[row]
         self.resident_ids[row] = new_id
 
         # Create slot data for the new villager (preserve save data if slot
@@ -883,6 +884,9 @@ class NpcEditorDialog(QDialog):
         if self.npc_db is not None and npc_id in self.npc_db:
             return self.npc_db[npc_id]
         # Fallback: build a minimal NpcEntry-like object from embedded databases
+        # GC/e+ saves use entity IDs (0xE000+), check GC_VILLAGER_NAMES first
+        if npc_id in GC_VILLAGER_NAMES:
+            return _FallbackNpcEntry(npc_id, {"name_en": GC_VILLAGER_NAMES[npc_id]})
         if npc_id in VANILLA_VILLAGERS:
             return _FallbackNpcEntry(npc_id, VANILLA_VILLAGERS[npc_id])
         if npc_id in DELUXE_VILLAGERS:

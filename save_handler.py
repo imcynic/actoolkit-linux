@@ -5,6 +5,7 @@ Supports:
   - Animal Crossing: City Folk (Wii) - RVFOREST.DAT (0x40F340 bytes)
   - Animal Crossing (GameCube) - .gci (0x72040), .gcs (0x72150), raw (0x200000)
   - Animal Crossing Deluxe (GameCube mod) - same formats as vanilla GC
+  - Doubutsu no Mori e+ (GameCube, JP) - .gci/.gcs/.raw (GAEJ/GAEE game IDs)
 
 All multi-byte values are big-endian (PowerPC byte order).
 Game type is auto-detected from file size and header.
@@ -17,9 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from game_profiles import (
-    GameType, ContainerType, StringEncoding, ChecksumType,
-    GameProfile, detect_game_from_file, get_profile_for_game,
-    GC_CONTAINER_OFFSETS,
+    GameType, ContainerType, GameProfile, detect_game_from_file, get_profile_for_game,
 )
 
 # ---------------------------------------------------------------------------
@@ -149,8 +148,15 @@ class SaveHandler:
 
     @property
     def is_gc(self) -> bool:
-        """True if the loaded save is a GameCube game."""
-        return self.game_type in (GameType.GC_VANILLA, GameType.GC_DELUXE)
+        """True if the loaded save is a GameCube game (incl. e+)."""
+        return self.game_type in (
+            GameType.GC_VANILLA, GameType.GC_DELUXE, GameType.GC_EPLUS,
+        )
+
+    @property
+    def is_eplus(self) -> bool:
+        """True if the loaded save is Doubutsu no Mori e+."""
+        return self.game_type == GameType.GC_EPLUS
 
     @property
     def is_accf(self) -> bool:
@@ -167,7 +173,14 @@ class SaveHandler:
         Returns ``True`` on success, ``False`` on failure.
         """
         path = Path(path)
-        raw = path.read_bytes()
+        try:
+            raw = path.read_bytes()
+        except (OSError, PermissionError) as exc:
+            raise OSError(f"Cannot read save file: {exc}") from exc
+
+        # Reject absurdly large files (real saves are ≤4.2 MB)
+        if len(raw) > 8 * 1024 * 1024:
+            return False
 
         # Try auto-detection
         try:
@@ -190,8 +203,8 @@ class SaveHandler:
         self.profile = get_profile_for_game(game_type)
         self.profile.save_data_start = save_start
 
-        # Detect GC Deluxe
-        if self.is_gc:
+        # Detect GC Deluxe (not applicable for e+ saves)
+        if self.is_gc and not self.is_eplus:
             self._detect_gc_deluxe()
 
         return True
@@ -227,7 +240,8 @@ class SaveHandler:
 
         If *path* is ``None``, overwrite the original file.
         """
-        expected_size = len(self.data)  # Preserve original file size
+        if not self.data:
+            raise ValueError("No save data loaded")
         self.update_all_crc()
 
         # For GC saves, duplicate the save data
@@ -349,8 +363,61 @@ class SaveHandler:
         "�", "�", "�", "�", "�", "�", "�", "�",
     )
 
+    # DnM e+ character encoding (Japanese: hiragana, katakana, Latin)
+    _EPLUS_CHAR_TABLE: tuple[str, ...] = (
+        # 0x00-0x0F: Hiragana あ-た
+        "あ", "い", "う", "え", "お", "か", "き", "く",
+        "け", "こ", "さ", "し", "す", "せ", "そ", "た",
+        # 0x10-0x1F: Hiragana ち-み
+        "ち", "つ", "て", "と", "な", "に", "ぬ", "ね",
+        "の", "は", "ひ", "ふ", "へ", "ほ", "ま", "み",
+        # 0x20-0x2F: space, punctuation + む, め
+        " ", "!", '"', "む", "め", "%", "&", "'",
+        "(", ")", "~", "♥", ",", "-", ".", "♪",
+        # 0x30-0x3F: digits + punctuation
+        "0", "1", "2", "3", "4", "5", "6", "7",
+        "8", "9", ":", "💧", "<", "+", ">", "?",
+        # 0x40-0x4F: @ + A-O
+        "@", "A", "B", "C", "D", "E", "F", "G",
+        "H", "I", "J", "K", "L", "M", "N", "O",
+        # 0x50-0x5F: P-Z + も, 💢, や, ゆ, _
+        "P", "Q", "R", "S", "T", "U", "V", "W",
+        "X", "Y", "Z", "も", "💢", "や", "ゆ", "_",
+        # 0x60-0x6F: よ + a-o
+        "よ", "a", "b", "c", "d", "e", "f", "g",
+        "h", "i", "j", "k", "l", "m", "n", "o",
+        # 0x70-0x7F: p-z + ら-れ + control escape
+        "p", "q", "r", "s", "t", "u", "v", "w",
+        "x", "y", "z", "ら", "り", "る", "れ", "\x7f",
+        # 0x80-0x8F: half-width katakana punctuation + small kana
+        "□", "。", "「", "」", "、", "・", "ヲ", "ァ",
+        "ィ", "ゥ", "ェ", "ォ", "ャ", "ュ", "ョ", "ッ",
+        # 0x90-0x9F: katakana ア-ソ (with ー)
+        "ー", "ア", "イ", "ウ", "エ", "オ", "カ", "キ",
+        "ク", "ケ", "コ", "サ", "シ", "ス", "セ", "ソ",
+        # 0xA0-0xAF: katakana タ-マ
+        "タ", "チ", "ツ", "テ", "ト", "ナ", "ニ", "ヌ",
+        "ネ", "ノ", "ハ", "ヒ", "フ", "ヘ", "ホ", "マ",
+        # 0xB0-0xBF: katakana ミ-ン + ヴ + smiley
+        "ミ", "ム", "メ", "モ", "ヤ", "ユ", "ヨ", "ラ",
+        "リ", "ル", "レ", "ロ", "ワ", "ン", "ヴ", "😄",
+        # 0xC0-0xCF: hiragana ろ-っ + newline + ガギ
+        "ろ", "わ", "を", "ん", "ぁ", "ぃ", "ぅ", "ぇ",
+        "ぉ", "ゃ", "ゅ", "ょ", "っ", "\n", "ガ", "ギ",
+        # 0xD0-0xDF: katakana dakuten グ-ブ
+        "グ", "ゲ", "ゴ", "ザ", "ジ", "ズ", "ゼ", "ゾ",
+        "ダ", "ヂ", "ヅ", "デ", "ド", "バ", "ビ", "ブ",
+        # 0xE0-0xEF: katakana ベ-ポ + hiragana voiced が-ぜ
+        "ベ", "ボ", "パ", "ピ", "プ", "ペ", "ポ", "が",
+        "ぎ", "ぐ", "げ", "ご", "ざ", "じ", "ず", "ぜ",
+        # 0xF0-0xFF: hiragana voiced ぞ-ぽ
+        "ぞ", "だ", "ぢ", "づ", "で", "ど", "ば", "び",
+        "ぶ", "べ", "ぼ", "ぱ", "ぴ", "ぷ", "ぺ", "ぽ",
+    )
+
     # Build reverse table for encoding (char -> byte)
     _GC_REVERSE: dict[str, int] = {}
+    _EPLUS_REVERSE: dict[str, int] = {}
 
     @classmethod
     def _build_gc_reverse(cls) -> dict[str, int]:
@@ -362,6 +429,28 @@ class SaveHandler:
                     cls._GC_REVERSE[ch] = i
         return cls._GC_REVERSE
 
+    @classmethod
+    def _build_eplus_reverse(cls) -> dict[str, int]:
+        if cls._EPLUS_REVERSE:
+            return cls._EPLUS_REVERSE
+        for i, ch in enumerate(cls._EPLUS_CHAR_TABLE):
+            if ch and ch != "\x7f" and ch != "\n":
+                if ch not in cls._EPLUS_REVERSE:
+                    cls._EPLUS_REVERSE[ch] = i
+        return cls._EPLUS_REVERSE
+
+    def _active_char_table(self) -> tuple[str, ...]:
+        """Return the correct character table for the loaded game type."""
+        if self.is_eplus:
+            return self._EPLUS_CHAR_TABLE
+        return self._GC_CHAR_TABLE
+
+    def _active_reverse_table(self) -> dict[str, int]:
+        """Return the correct reverse encoding table for the loaded game type."""
+        if self.is_eplus:
+            return self._build_eplus_reverse()
+        return self._build_gc_reverse()
+
     def read_gc_string(self, offset: int, max_chars: int = 8) -> str:
         """
         Read a GC-encoded string (1 byte per char).
@@ -370,15 +459,18 @@ class SaveHandler:
         The encoding is ASCII-compatible for common characters.
         0x7F is a control escape (stop reading).  0xCD is newline
         (replaced with space for name/catchphrase contexts).
+
+        For DnM e+, uses the Japanese character table instead.
         """
         self._check_offset(offset, max_chars)
+        table = self._active_char_table()
         chars: list[str] = []
         for i in range(max_chars):
             b = self.data[offset + i]
             if b == 0x7F:
                 break  # Control escape — stop
-            if b < len(self._GC_CHAR_TABLE):
-                ch = self._GC_CHAR_TABLE[b]
+            if b < len(table):
+                ch = table[b]
                 if ch == "�":
                     break  # Reserved/invalid — stop
                 # Replace newline with space for display
@@ -390,7 +482,7 @@ class SaveHandler:
     def write_gc_string(self, offset: int, text: str, max_chars: int = 8) -> None:
         """Write a GC-encoded string (1 byte per char, space-padded)."""
         self._check_offset(offset, max_chars)
-        reverse = self._build_gc_reverse()
+        reverse = self._active_reverse_table()
         for i in range(max_chars):
             if i < len(text):
                 ch = text[i]
@@ -411,6 +503,7 @@ class SaveHandler:
         if self.is_gc:
             return self.read_gc_string(offset, max_chars)
         # ACCF: UTF-16 BE
+        self._check_offset(offset, max_chars * 2)
         chars: list[str] = []
         for i in range(max_chars):
             code = struct.unpack_from(">H", self.data, offset + i * 2)[0]
@@ -427,6 +520,7 @@ class SaveHandler:
         if self.is_gc:
             return self.write_gc_string(offset, max_chars=max_chars, text=text)
         # ACCF: UTF-16 BE
+        self._check_offset(offset, max_chars * 2)
         for i in range(max_chars):
             code = ord(text[i]) if i < len(text) else 0
             struct.pack_into(">H", self.data, offset + i * 2, code)
@@ -731,8 +825,9 @@ class SaveHandler:
 
     def get_town_name(self, p: int = 0) -> str:
         if self.is_gc and self.profile and self.profile.town_name_offset:
-            # GC: global town name
-            return self.read_string(self._soff(self.profile.town_name_offset), 8)
+            # GC: global town name (use profile name max for e+ compat)
+            name_max = self.profile.p_name_max if self.profile else 8
+            return self.read_string(self._soff(self.profile.town_name_offset), name_max)
         po = self.player_offset(p)
         if self.profile:
             return self.read_string(po + self.profile.p_town_name, self.profile.p_name_max)
@@ -863,11 +958,16 @@ class SaveHandler:
     # ======================================================================
 
     def get_nook_style(self) -> int:
+        if self.is_gc and self.profile and self.profile.nook_style_offset:
+            return self.read_u8(self._soff(self.profile.nook_style_offset))
         if self.is_gc:
-            return 0  # TODO: find GC nook style offset
+            return 0  # GC vanilla: nook style offset not mapped
         return self.read_u8(0x630C3)
 
     def set_nook_style(self, val: int) -> None:
+        if self.is_gc and self.profile and self.profile.nook_style_offset:
+            self.write_u8(self._soff(self.profile.nook_style_offset), val & 0xFF)
+            return
         if self.is_gc:
             return
         self.write_u8(0x630C3, val & 0xFF)
@@ -1252,49 +1352,78 @@ class SaveHandler:
     # House helpers
     # ======================================================================
 
-    _HOUSE_BASE = 0x6DE6C
-    _ROOM_STRIDE = 0x15C0
-    _FLOOR_STRIDE = 0x458
+    # ACCF-specific house layout constants (used when profile is unavailable)
+    _ACCF_HOUSE_BASE = 0x6DE6C
+    _ACCF_ROOM_STRIDE = 0x15C0
+    _ACCF_FLOOR_STRIDE = 0x458
+
+    def _house_base_offset(self, house_index: int) -> int:
+        """Return absolute offset for a house, using profile when available."""
+        if self.profile and self.profile.house_start:
+            return self._soff(self.profile.house_start
+                              + house_index * self.profile.house_stride)
+        return self._ACCF_HOUSE_BASE + house_index * self._ACCF_ROOM_STRIDE
 
     def get_house_room(self, room_index: int, floor: int) -> list[int]:
         """
-        Read a 16x16 (256) u16 room grid.  ACCF only.
+        Read a 16x16 (256) u16 room grid.
 
-        *room_index*: 0-3 (one per player).
-        *floor*: 0-5 (three floor levels x 2 sides).
+        *room_index*: 0-3 (one per player / house).
+        *floor*: room sub-index within the house.
+          - ACCF: 0-5 (three floor levels x 2 sides).
+          - GC/e+: 0-2 (entry room, second floor, basement).
         """
-        if self.is_gc:
-            return []  # TODO: implement GC house reading
+        if self.profile and self.profile.house_start:
+            max_rooms = self.profile.room_count
+            if not (0 <= room_index < self.profile.house_count):
+                raise ValueError(f"room_index must be 0-{self.profile.house_count - 1}, got {room_index}")
+            if not (0 <= floor < max_rooms):
+                raise ValueError(f"floor must be 0-{max_rooms - 1}, got {floor}")
+            hdr_size = self.profile.house_stride - self.profile.room_count * self.profile.room_stride
+            if hdr_size < 0:
+                return []
+            base = (self._soff(self.profile.house_start)
+                    + room_index * self.profile.house_stride
+                    + hdr_size
+                    + floor * self.profile.room_stride)
+            item_count = min(self.profile.room_stride // 2, 256)
+            return [self.read_u16(base + i * 2) for i in range(item_count)]
+
+        # ACCF fallback (no profile loaded)
         if not (0 <= room_index < PLAYER_COUNT):
             raise ValueError(f"room_index must be 0-3, got {room_index}")
         if not (0 <= floor < 6):
             raise ValueError(f"floor must be 0-5, got {floor}")
         base = (
-            self._HOUSE_BASE
-            + room_index * self._ROOM_STRIDE
-            + floor * self._FLOOR_STRIDE
+            self._ACCF_HOUSE_BASE
+            + room_index * self._ACCF_ROOM_STRIDE
+            + floor * self._ACCF_FLOOR_STRIDE
         )
         return [self.read_u16(base + i * 2) for i in range(256)]
 
     def get_house_items(self, room_index: int) -> list[list[int]]:
         """
-        Return all 6 grids for *room_index* (3 floors x 2 sides).  ACCF only.
+        Return all room grids for *room_index*.
 
-        Returns a list of 6 lists, each containing 256 u16 values:
-            [floor0_left, floor0_right, floor1_left, floor1_right,
-             floor2_left, floor2_right]
+        - ACCF: 6 lists (3 floors x 2 sides), each 256 u16 values.
+        - GC/e+: 3 lists (entry, upstairs, basement), each room_stride//2 u16 values.
         """
-        if self.is_gc:
-            return []  # TODO: implement GC house reading
+        if self.profile and self.profile.house_start:
+            if not (0 <= room_index < self.profile.house_count):
+                raise ValueError(f"room_index must be 0-{self.profile.house_count - 1}, got {room_index}")
+            return [self.get_house_room(room_index, r)
+                    for r in range(self.profile.room_count)]
+
+        # ACCF fallback
         if not (0 <= room_index < PLAYER_COUNT):
             raise ValueError(f"room_index must be 0-3, got {room_index}")
         grids: list[list[int]] = []
         for floor in range(3):
             for side in range(2):
                 offset = (
-                    self._HOUSE_BASE
-                    + room_index * self._ROOM_STRIDE
-                    + floor * self._FLOOR_STRIDE
+                    self._ACCF_HOUSE_BASE
+                    + room_index * self._ACCF_ROOM_STRIDE
+                    + floor * self._ACCF_FLOOR_STRIDE
                     + side * 256 * 2
                 )
                 grid = [self.read_u16(offset + i * 2) for i in range(256)]
@@ -1961,14 +2090,28 @@ class SaveHandler:
     _PAT_PALETTE_ID = 0x86F    # u8 palette group index
 
     def _pattern_offset(self, p: int, slot: int) -> int:
-        """Absolute offset of pattern *slot* (0-7) for player *p* (0-3).  ACCF layout."""
+        """Absolute offset of pattern *slot* (0-7) for player *p* (0-3)."""
+        if self.profile and self.profile.pattern_base:
+            count = self.profile.pattern_count or 8
+            if not 0 <= slot < count:
+                raise ValueError(f"Pattern slot must be 0-{count - 1}, got {slot}")
+            return (self._soff(self.profile.player_start)
+                    + p * self.profile.player_stride
+                    + self.profile.pattern_base
+                    + slot * self.profile.pattern_stride)
+        # ACCF fallback
         if not 0 <= slot < self._PATTERN_COUNT:
             raise ValueError(f"Pattern slot must be 0-7, got {slot}")
         return self._PATTERN_BASE + self.player_offset(p) + slot * self._PATTERN_SIZE
 
     def get_pattern_title(self, p: int, slot: int) -> str:
+        if self.profile and self.profile.pattern_base and self.is_gc:
+            # GC/e+: 1-byte-per-char encoding
+            off = self._pattern_offset(p, slot) + self.profile.pat_title
+            size = self.profile.pat_title_size
+            return self.read_gc_string(off, size)
         if self.is_gc:
-            return ""  # TODO: implement GC pattern titles
+            return ""
         off = self._pattern_offset(p, slot) + self._PAT_TITLE
         self._check_offset(off, 32)
         raw = bytes(self.data[off:off + 32])
@@ -1978,6 +2121,12 @@ class SaveHandler:
             return ""
 
     def set_pattern_title(self, p: int, slot: int, title: str) -> None:
+        if self.profile and self.profile.pattern_base and self.is_gc:
+            off = self._pattern_offset(p, slot) + self.profile.pat_title
+            size = self.profile.pat_title_size
+            self.write_gc_string(off, title[:size], size)
+            self.modified = True
+            return
         if self.is_gc:
             return
         off = self._pattern_offset(p, slot) + self._PAT_TITLE
@@ -1988,6 +2137,11 @@ class SaveHandler:
         self.modified = True
 
     def get_pattern_creator(self, p: int, slot: int) -> str:
+        if self.profile and self.profile.pattern_base and self.is_gc:
+            if self.profile.pat_creator_size:
+                off = self._pattern_offset(p, slot) + self.profile.pat_creator
+                return self.read_gc_string(off, self.profile.pat_creator_size)
+            return ""  # GC patterns have no separate creator field
         if self.is_gc:
             return ""
         off = self._pattern_offset(p, slot) + self._PAT_CREATOR
@@ -1999,9 +2153,14 @@ class SaveHandler:
             return ""
 
     def get_pattern_palette_rgb(self, p: int, slot: int) -> list[tuple[int, int, int]]:
-        """Read the 16-color RGB565 palette, return as list of (R, G, B) tuples.  ACCF only."""
+        """Read the 16-color palette as (R, G, B) tuples.
+
+        ACCF: RGB565 BE (16 x 2 bytes).
+        GC/e+: 1-byte palette index (not an inline RGB palette).
+        Returns empty list for GC since palette is index-based, not embedded RGB.
+        """
         if self.is_gc:
-            return []
+            return []  # GC uses palette index, not embedded RGB565
         off = self._pattern_offset(p, slot) + self._PAT_PALETTE
         self._check_offset(off, 32)
         colors = []
@@ -2013,8 +2172,39 @@ class SaveHandler:
             colors.append((r, g, b))
         return colors
 
+    def get_pattern_palette_index(self, p: int, slot: int) -> int:
+        """Read the palette index byte for a GC/e+ pattern. Returns -1 for ACCF."""
+        if not self.is_gc:
+            return -1
+        if self.profile and self.profile.pattern_base and self.profile.pat_palette:
+            off = self._pattern_offset(p, slot) + self.profile.pat_palette
+            return self.read_u8(off)
+        return 0
+
     def get_pattern_pixels(self, p: int, slot: int) -> list[list[int]]:
-        """Read 32x32 pixel indices (0-15) in raster order from C4 block data.  ACCF only."""
+        """Read 32x32 pixel indices (0-15) in raster order.
+
+        ACCF: C4 block order (8x8 blocks).
+        GC/e+: Linear raster order (row by row, 2 pixels per byte).
+        """
+        if self.profile and self.profile.pattern_base and self.is_gc:
+            off = self._pattern_offset(p, slot) + self.profile.pat_pixels
+            size = self.profile.pat_pixels_size
+            if off + size > len(self.data):
+                return []
+            raw = bytes(self.data[off:off + size])
+            # GC: linear raster, 2 pixels per byte (high nibble first)
+            pixels = [[0] * 32 for _ in range(32)]
+            src = 0
+            for y in range(32):
+                for x in range(0, 32, 2):
+                    if src >= len(raw):
+                        break
+                    byte = raw[src]
+                    src += 1
+                    pixels[y][x] = (byte >> 4) & 0xF
+                    pixels[y][x + 1] = byte & 0xF
+            return pixels
         if self.is_gc:
             return []
         off = self._pattern_offset(p, slot) + self._PAT_PIXELS

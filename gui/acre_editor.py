@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from items_db import ITEMS, CATEGORIES
 
@@ -140,7 +141,7 @@ class AcreEditorDialog(QDialog):
             acre_ids = CATEGORIES.get(cat_key, [])
             for acre_id in acre_ids:
                 item_info = ITEMS.get(acre_id, {})
-                name = item_info.get("name_ea", f"Unknown")
+                name = item_info.get("name_ea", "Unknown")
                 label = f"0x{acre_id:04X} - {name}"
                 child = QTreeWidgetItem(parent, [label])
                 child.setData(0, Qt.ItemDataRole.UserRole, acre_id)

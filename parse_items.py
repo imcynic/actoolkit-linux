@@ -5,7 +5,6 @@ Reads the Delphi source and generates items_db.py with all item data.
 """
 
 import re
-import sys
 
 INPUT_FILE = "/home/bryan/actoolkit/items.pas"
 OUTPUT_FILE = "/home/bryan/actoolkit-linux/items_db.py"
@@ -222,7 +221,7 @@ def generate_python(arrays, output_file):
             f.write(f'        "name_ja": "{ea}",\n')
             f.write(f'        "category": "{category}",\n')
             f.write(f'        "subcategory": "{subcategory}",\n')
-            f.write(f'    }},\n')
+            f.write('    },\n')
 
         # Process all arrays in order
         # Sort by category map order (maintain original file order as much as possible)
@@ -277,7 +276,7 @@ def generate_python(arrays, output_file):
                 f.write(f'        "name_ja": "{ja}",\n')
                 f.write(f'        "category": "{category}",\n')
                 f.write(f'        "subcategory": "{subcategory}",\n')
-                f.write(f'    }},\n')
+                f.write('    },\n')
 
         # Also handle any arrays not in CATEGORY_MAP (in case we missed some)
         for array_name in arrays:
@@ -323,9 +322,9 @@ def generate_python(arrays, output_file):
                     f.write(f'        "name_se": "{se}",\n')
                     f.write(f'        "name_fe": "{fe}",\n')
                     f.write(f'        "name_ja": "{ja}",\n')
-                    f.write(f'        "category": "uncategorized",\n')
+                    f.write('        "category": "uncategorized",\n')
                     f.write(f'        "subcategory": "{array_name}",\n')
-                    f.write(f'    }},\n')
+                    f.write('    },\n')
 
         f.write('}\n\n\n')
 
@@ -348,7 +347,7 @@ def generate_python(arrays, output_file):
             f.write(f'    "{array_name}": [\n')
             for code in categories_data[array_name]:
                 f.write(f'        0x{code:04X},\n')
-            f.write(f'    ],\n')
+            f.write('    ],\n')
 
         # Terrain
         f.write('\n    # Terrain\n')
@@ -360,7 +359,7 @@ def generate_python(arrays, output_file):
             f.write(f'    "{array_name}": [\n')
             for code in categories_data[array_name]:
                 f.write(f'        0x{code:04X},\n')
-            f.write(f'    ],\n')
+            f.write('    ],\n')
 
         # Items (i_ prefix but not furniture)
         item_arrays = ["i_bells", "i_insects", "i_fish", "i_flooring", "i_flowers",
@@ -374,7 +373,7 @@ def generate_python(arrays, output_file):
             f.write(f'    "{array_name}": [\n')
             for code in categories_data[array_name]:
                 f.write(f'        0x{code:04X},\n')
-            f.write(f'    ],\n')
+            f.write('    ],\n')
 
         # Furniture
         furniture_arrays = ["i_equipment", "i_dlc", "i_series", "i_boxing", "i_classroom",
@@ -387,7 +386,7 @@ def generate_python(arrays, output_file):
             f.write(f'    "{array_name}": [\n')
             for code in categories_data[array_name]:
                 f.write(f'        0x{code:04X},\n')
-            f.write(f'    ],\n')
+            f.write('    ],\n')
 
         # Other
         other_arrays = ["i_other1", "i_other2", "i_other3", "i_nintendo", "i_gyroids",
@@ -399,16 +398,16 @@ def generate_python(arrays, output_file):
             f.write(f'    "{array_name}": [\n')
             for code in categories_data[array_name]:
                 f.write(f'        0x{code:04X},\n')
-            f.write(f'    ],\n')
+            f.write('    ],\n')
 
         # Any uncategorized
         for cat_key in categories_data:
             if cat_key not in ordered_keys and cat_key != "special_hardcoded":
-                f.write(f'\n    # Uncategorized\n')
+                f.write('\n    # Uncategorized\n')
                 f.write(f'    "{cat_key}": [\n')
                 for code in categories_data[cat_key]:
                     f.write(f'        0x{code:04X},\n')
-                f.write(f'    ],\n')
+                f.write('    ],\n')
 
         f.write('}\n')
 

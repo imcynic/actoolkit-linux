@@ -11,9 +11,8 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QGroupBox, QTabWidget, QMenuBar, QMenu,
-    QStatusBar, QFileDialog, QInputDialog, QMessageBox, QSizePolicy,
-    QSpacerItem, QApplication, QDialog,
+    QLabel, QPushButton, QGroupBox, QTabWidget, QStatusBar, QFileDialog, QInputDialog, QMessageBox, QSizePolicy,
+    QDialog,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QSize
 from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QIcon
@@ -376,6 +375,12 @@ class MainWindow(QMainWindow):
         self.action_slot_analyzer = QAction("Slot &Analyzer...", self)
         tools_menu.addAction(self.action_slot_analyzer)
 
+        tools_menu.addSeparator()
+        self.action_convert_eplus_to_gafe = QAction("Convert e+ → &GAFE (US)...", self)
+        self.action_convert_gafe_to_eplus = QAction("Convert GAFE → e&+...", self)
+        tools_menu.addAction(self.action_convert_eplus_to_gafe)
+        tools_menu.addAction(self.action_convert_gafe_to_eplus)
+
         # --- Help ---
         help_menu = menubar.addMenu("&Help")
         assert help_menu is not None
@@ -475,6 +480,8 @@ class MainWindow(QMainWindow):
 
         # Tools menu
         self.action_slot_analyzer.triggered.connect(self._on_slot_analyzer)
+        self.action_convert_eplus_to_gafe.triggered.connect(self._on_convert_eplus_to_gafe)
+        self.action_convert_gafe_to_eplus.triggered.connect(self._on_convert_gafe_to_eplus)
 
         # Help menu
         self.action_about.triggered.connect(self._on_about)
@@ -519,6 +526,8 @@ class MainWindow(QMainWindow):
         self.action_fill_catalog.setEnabled(enabled)
         self.action_fill_music.setEnabled(enabled)
         self.action_slot_analyzer.setEnabled(enabled)
+        self.action_convert_eplus_to_gafe.setEnabled(False)
+        self.action_convert_gafe_to_eplus.setEnabled(False)
 
         for action in self.nook_style_actions:
             action.setEnabled(enabled)
@@ -559,6 +568,7 @@ class MainWindow(QMainWindow):
         if not self.save_handler:
             return
         is_gc = self.save_handler.is_gc
+        is_eplus = self.save_handler.is_eplus
 
         # GC doesn't have these features
         self.action_dlc_editor.setEnabled(not is_gc)
@@ -570,12 +580,18 @@ class MainWindow(QMainWindow):
         self.action_fill_catalog.setEnabled(not is_gc)
         self.action_fill_music.setEnabled(not is_gc)
 
-        # Buildings are different on GC
-        # self.action_building_editor.setEnabled(not is_gc)  # TODO: adapt
+        # Buildings editor is ACCF-only (GC uses different structure)
+        self.action_building_editor.setEnabled(not is_gc)
 
         # Nook's style is different on GC
         for action in self.nook_style_actions:
             action.setEnabled(not is_gc)
+
+        # Conversion tools: enable based on loaded game type
+        self.action_convert_eplus_to_gafe.setEnabled(is_eplus)
+        self.action_convert_gafe_to_eplus.setEnabled(
+            is_gc and not is_eplus
+        )
 
     def _merge_deluxe_items(self) -> None:
         """Merge Deluxe Edition items into the global items_db when a Deluxe save is detected."""
@@ -685,6 +701,7 @@ class MainWindow(QMainWindow):
 
         # Detect Deluxe save early (before CRC warning, so we can contextualise)
         self._is_deluxe = False
+        self._is_eplus = False
         try:
             if self.save_handler.is_accf:
                 from deluxe_items import is_deluxe_save
@@ -694,6 +711,7 @@ class MainWindow(QMainWindow):
                 self._is_deluxe = self.save_handler.game_type in (
                     GameType.GC_DELUXE, GameType.WII_ACCF_DELUXE,
                 )
+                self._is_eplus = self.save_handler.game_type == GameType.GC_EPLUS
         except Exception:
             pass
 
@@ -1145,6 +1163,62 @@ class MainWindow(QMainWindow):
         from gui.slot_analyzer_dialog import SlotAnalyzerDialog
         dlg = SlotAnalyzerDialog(self.save_handler, parent=self)
         dlg.exec()
+
+    @pyqtSlot()
+    def _on_convert_eplus_to_gafe(self) -> None:
+        """Convert the loaded e+ save to GAFE (US) format."""
+        if not self.save_handler or not self.save_handler.is_eplus:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Converted GAFE File",
+            "",
+            "GCI Files (*.gci);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            from eplus_converter import convert_eplus_to_gafe
+            dst = convert_eplus_to_gafe(self.save_handler)
+            dst.save(path)
+            QMessageBox.information(
+                self,
+                "Conversion Complete",
+                f"e+ save converted to GAFE format:\n{path}\n\n"
+                "Player data, town items, villagers, and acres have been "
+                "transferred. Some e+-exclusive data may not have equivalents "
+                "in the US version.",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Conversion Error", f"Failed to convert:\n{e}")
+
+    @pyqtSlot()
+    def _on_convert_gafe_to_eplus(self) -> None:
+        """Convert the loaded GAFE save to e+ (GAEJ) format."""
+        if not self.save_handler or not self.save_handler.is_gc:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Converted e+ File",
+            "",
+            "GCI Files (*.gci);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            from eplus_converter import convert_gafe_to_eplus
+            dst = convert_gafe_to_eplus(self.save_handler)
+            dst.save(path)
+            QMessageBox.information(
+                self,
+                "Conversion Complete",
+                f"GAFE save converted to e+ format:\n{path}\n\n"
+                "Player data, town items, villagers, and acres have been "
+                "transferred. Some US-exclusive data may not have equivalents "
+                "in e+.",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Conversion Error", f"Failed to convert:\n{e}")
 
     # ------------------------------------------------------------------
     # Help

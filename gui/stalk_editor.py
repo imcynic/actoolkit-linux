@@ -11,8 +11,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout,
-    QGroupBox, QFormLayout, QLabel,
-    QSpinBox, QComboBox, QPushButton,
+    QGroupBox, QFormLayout, QSpinBox, QComboBox, QPushButton,
     QTableWidget, QHeaderView, QWidget,
     QAbstractItemView, QMessageBox,
 )

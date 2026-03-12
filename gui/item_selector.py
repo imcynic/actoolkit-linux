@@ -393,7 +393,7 @@ class ItemSelectorWidget(QWidget):
     def _collect_leaf_items(self) -> list[QTreeWidgetItem]:
         """Return all visible leaf items in tree order."""
         leaves: list[QTreeWidgetItem] = []
-        iterator = self._tree.itemAt(0, 0)  # not needed -- use manual walk
+        self._tree.itemAt(0, 0)  # not needed -- use manual walk
 
         def _walk(parent_item: QTreeWidgetItem) -> None:
             for i in range(parent_item.childCount()):
