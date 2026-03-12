@@ -577,8 +577,9 @@ class MainWindow(QMainWindow):
         self.action_pattern_editor.setEnabled(not is_gc)  # TODO: add GC pattern support
         self.action_restore_grass.setEnabled(not is_gc)
         self.action_remove_grass.setEnabled(not is_gc)
-        self.action_fill_catalog.setEnabled(not is_gc)
-        self.action_fill_music.setEnabled(not is_gc)
+        has_catalog = getattr(self.save_handler.profile, 'has_catalog', False) if self.save_handler.profile else not is_gc
+        self.action_fill_catalog.setEnabled(has_catalog)
+        self.action_fill_music.setEnabled(has_catalog)
 
         # Buildings editor is ACCF-only (GC uses different structure)
         self.action_building_editor.setEnabled(not is_gc)
@@ -886,10 +887,13 @@ class MainWindow(QMainWindow):
         if not self.save_handler:
             return
         p = self.current_player
-        from save_handler import CATALOG_RANGES
-        for name, (start, end) in CATALOG_RANGES.items():
-            if name != "music":
-                self.save_handler.fill_catalog(p, start, end)
+        if self.save_handler.is_gc:
+            self.save_handler.fill_gc_catalog(p)
+        else:
+            from save_handler import CATALOG_RANGES
+            for name, (start, end) in CATALOG_RANGES.items():
+                if name != "music":
+                    self.save_handler.fill_catalog(p, start, end)
         self._mark_modified()
         self.status_bar.showMessage("Catalog filled.", 3000)
 
@@ -898,9 +902,12 @@ class MainWindow(QMainWindow):
         if not self.save_handler:
             return
         p = self.current_player
-        from save_handler import CATALOG_RANGES
-        start, end = CATALOG_RANGES["music"]
-        self.save_handler.fill_catalog(p, start, end)
+        if self.save_handler.is_gc:
+            self.save_handler.fill_gc_music(p)
+        else:
+            from save_handler import CATALOG_RANGES
+            start, end = CATALOG_RANGES["music"]
+            self.save_handler.fill_catalog(p, start, end)
         self._mark_modified()
         self.status_bar.showMessage("Music catalog filled.", 3000)
 

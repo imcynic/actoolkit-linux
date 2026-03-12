@@ -48,11 +48,11 @@ DLC_BITM_SIZE    = 0x18C       # 396-byte BITM header
 DLC_ASH0_SIZE    = 0x1E70      # ASH0 compressed data region
 DLC_VALID_MARKER = 0x1701
 
-# Catalog bitmap (per-player, relative to player start)
+# ACCF catalog bitmap (per-player, relative to player start)
 CATALOG_BITMAP_OFF = 0x72DA
 CATALOG_BITMAP_SIZE = 512      # 4096 bits
 
-# Catalog item ranges  {name: (start_code, end_code)}
+# ACCF catalog item ranges  {name: (start_code, end_code)}
 CATALOG_RANGES = {
     "furniture":  (0xB710, 0xC248),
     "paper":      (0x9640, 0x974C),
@@ -66,6 +66,28 @@ CATALOG_RANGES = {
     "gyroids":    (0xB3F0, 0xB5EC),
     "fossils":    (0xCC28, 0xCD10),
     "music":      (0xD000, 0xD138),
+}
+
+# GC catalog sub-regions (all offsets relative to player struct start)
+# From ac-decomp m_private.h and ACSE Catalog.cs
+_GC_CATALOG_REGIONS = {
+    "furniture": (0x1108, 172),  # 43 u32s = 1376 bits
+    "wallpaper": (0x11B4, 12),   # 3 u32s = 96 bits
+    "carpet":    (0x11C0, 12),   # 3 u32s = 96 bits
+    "paper":     (0x11CC, 8),    # 2 u32s = 64 bits
+    "music":     (0x11D4, 8),    # 2 u32s = 64 bits
+}
+
+# Encyclopedia bits overlap furniture bitfield at these player-relative offsets.
+# Each entry: (offset, catalog_mask) — bits set in mask are catalog, cleared are encyclopedia.
+# From ACSE Encyclopedia.cs: filling catalog must NOT overwrite encyclopedia bits.
+_GC_ENCYCLOPEDIA_OVERLAP = {
+    0x1164: 0x00, 0x1165: 0x03,
+    0x1166: 0xFF, 0x1167: 0xFF,
+    0x1168: 0x00, 0x1169: 0x00, 0x116A: 0x00, 0x116B: 0x00,
+    0x116C: 0x00, 0x116D: 0x00, 0x116E: 0x00, 0x116F: 0x00,
+    0x1170: 0xFF, 0x1171: 0xFF, 0x1172: 0xFF,
+    0x1173: 0xFC,
 }
 
 # ---------------------------------------------------------------------------
@@ -1476,6 +1498,63 @@ class SaveHandler:
             off = catalog_base + byte_off
             self.write_u8(off, self.read_u8(off) | bit_mask)
             code += 4
+
+    # --- GC catalog (bitmap-based, split into sub-regions) ----------------
+
+    def fill_gc_catalog(self, p: int) -> None:
+        """Fill all GC catalog sub-regions (furniture, wallpaper, carpet, paper).
+
+        Does NOT fill music — use fill_gc_music() for that.
+        Preserves encyclopedia bits that overlap the furniture bitfield.
+        """
+        if not self.is_gc or not self.profile:
+            return
+        po = self.player_offset(p)
+
+        for name, (off, size) in _GC_CATALOG_REGIONS.items():
+            if name == "music":
+                continue
+            base = po + off
+            for i in range(size):
+                addr = base + i
+                abs_off = off + i  # player-relative offset
+                if abs_off in _GC_ENCYCLOPEDIA_OVERLAP:
+                    mask = _GC_ENCYCLOPEDIA_OVERLAP[abs_off]
+                    if mask == 0x00:
+                        continue  # pure encyclopedia byte — don't touch
+                    # Mixed byte: set only catalog bits, preserve encyclopedia
+                    self.write_u8(addr, self.read_u8(addr) | mask)
+                else:
+                    self.write_u8(addr, 0xFF)
+        self.modified = True
+
+    def fill_gc_music(self, p: int) -> None:
+        """Fill the GC music catalog bitfield (55 K.K. songs)."""
+        if not self.is_gc or not self.profile:
+            return
+        off, size = _GC_CATALOG_REGIONS["music"]
+        base = self.player_offset(p) + off
+        for i in range(size):
+            self.write_u8(base + i, 0xFF)
+        self.modified = True
+
+    def gc_catalog_total(self, p: int) -> int:
+        """Count total catalog bits set across all GC sub-regions for a player."""
+        if not self.is_gc or not self.profile:
+            return 0
+        po = self.player_offset(p)
+        total = 0
+        for name, (off, size) in _GC_CATALOG_REGIONS.items():
+            base = po + off
+            for i in range(size):
+                addr = base + i
+                abs_off = off + i
+                byte_val = self.read_u8(addr)
+                if abs_off in _GC_ENCYCLOPEDIA_OVERLAP:
+                    mask = _GC_ENCYCLOPEDIA_OVERLAP[abs_off]
+                    byte_val &= mask  # only count catalog bits
+                total += bin(byte_val).count('1')
+        return total
 
     # ======================================================================
     # DLC reading

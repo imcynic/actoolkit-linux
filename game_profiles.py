@@ -270,7 +270,7 @@ GC_PROFILE = GameProfile(
     p_held_item=0x4A4,      # Currently held item
     p_emotions=0x00,        # GC doesn't have the same emotion system
     p_emotion_count=0,
-    p_catalog=0x00,         # GC catalog is different
+    p_catalog=0x1108,       # GC catalog: furniture bitfield start (0x1108-0x11DB)
 
     # Global town name (rel:save)
     town_name_offset=0x9120,
@@ -364,7 +364,7 @@ GC_PROFILE = GameProfile(
     has_dlc=False,
     has_island=True,
     has_emotions=False,       # GC doesn't have equippable emotions
-    has_catalog=False,        # GC catalog is different format
+    has_catalog=True,         # GC catalog supported (bitmap at 0x1108-0x11DB)
     has_points=False,
     has_museum=False,         # TODO: implement GC museum
 )
