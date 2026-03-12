@@ -217,22 +217,24 @@ class SaveHandler:
             if off < len(self.data):
                 flags = self.data[off]
                 if flags & 0xF0:  # Upper nibble has ordinance bits
-                    self.game_type = GameType.GC_DELUXE
-                    self.profile.game_type = GameType.GC_DELUXE
-                    self.profile.display_name = "Animal Crossing Deluxe (GameCube)"
-                    self.profile.stalk_pattern_max = 4  # Deluxe has 5 patterns
+                    self._apply_deluxe_profile()
                     return
             # Check stalk market trend type at save+0x2048E
             off = self._save_data_start + 0x2048E
             if off + 1 < len(self.data):
                 trend = self.read_u16(off)
-                if trend >= 3:
-                    self.game_type = GameType.GC_DELUXE
-                    self.profile.game_type = GameType.GC_DELUXE
-                    self.profile.display_name = "Animal Crossing Deluxe (GameCube)"
-                    self.profile.stalk_pattern_max = 4
+                if 3 <= trend <= 6:  # Valid Deluxe trend range (not 0xFFFF)
+                    self._apply_deluxe_profile()
         except Exception:
             pass
+
+    def _apply_deluxe_profile(self) -> None:
+        """Apply Deluxe mod profile overrides."""
+        self.game_type = GameType.GC_DELUXE
+        self.profile.game_type = GameType.GC_DELUXE
+        self.profile.display_name = "Animal Crossing Deluxe (GameCube)"
+        self.profile.stalk_pattern_max = 4  # Deluxe has 5 patterns
+        self.profile.p_bank = 0x1238  # Deluxe shifted bank from 0x122C
 
     def save(self, path: str | Path | None = None) -> None:
         """
