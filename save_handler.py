@@ -1509,7 +1509,12 @@ class SaveHandler:
         """
         if not self.is_gc or not self.profile:
             return
-        po = self.player_offset(p)
+        if not (0 <= p < (self.profile.player_count or 4)):
+            return
+        try:
+            po = self.player_offset(p)
+        except (ValueError, IndexError):
+            return
 
         for name, (off, size) in _GC_CATALOG_REGIONS.items():
             if name == "music":
@@ -1532,8 +1537,13 @@ class SaveHandler:
         """Fill the GC music catalog bitfield (55 K.K. songs)."""
         if not self.is_gc or not self.profile:
             return
-        off, size = _GC_CATALOG_REGIONS["music"]
-        base = self.player_offset(p) + off
+        if not (0 <= p < (self.profile.player_count or 4)):
+            return
+        try:
+            base = self.player_offset(p) + _GC_CATALOG_REGIONS["music"][0]
+        except (ValueError, IndexError):
+            return
+        size = _GC_CATALOG_REGIONS["music"][1]
         for i in range(size):
             self.write_u8(base + i, 0xFF)
         self.modified = True
@@ -1542,17 +1552,23 @@ class SaveHandler:
         """Count total catalog bits set across all GC sub-regions for a player."""
         if not self.is_gc or not self.profile:
             return 0
-        po = self.player_offset(p)
+        if not (0 <= p < (self.profile.player_count or 4)):
+            return 0
+        try:
+            po = self.player_offset(p)
+        except (ValueError, IndexError):
+            return 0
         total = 0
-        for name, (off, size) in _GC_CATALOG_REGIONS.items():
+        for _name, (off, size) in _GC_CATALOG_REGIONS.items():
             base = po + off
             for i in range(size):
-                addr = base + i
+                try:
+                    byte_val = self.read_u8(base + i)
+                except (IndexError, struct.error):
+                    continue
                 abs_off = off + i
-                byte_val = self.read_u8(addr)
                 if abs_off in _GC_ENCYCLOPEDIA_OVERLAP:
-                    mask = _GC_ENCYCLOPEDIA_OVERLAP[abs_off]
-                    byte_val &= mask  # only count catalog bits
+                    byte_val &= _GC_ENCYCLOPEDIA_OVERLAP[abs_off]
                 total += bin(byte_val).count('1')
         return total
 
