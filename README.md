@@ -44,11 +44,12 @@ Container formats: `.dat` (Wii raw), `.gci` (Dolphin/GC), `.gcs` (GC export), `.
 ### Inventory & Storage
 - **Pockets** — 15 item slots with drag-and-drop item selector
 - **Drawers** — 160 storage slots (ACCF)
-- **Lost & Found / Recycle Bin** — 12 slots each (ACCF)
-- **Nook's Store** — 36 shop inventory slots (ACCF)
+- **Lost & Found** — 12 slots at gate (ACCF) / 20 slots at police station (GC)
+- **Recycle Bin** — 12 slots (ACCF)
+- **Nook's Store** — 36 shop inventory slots (ACCF) / 39 slots (GC)
 
 ### Town
-- **Town Map** — full 80x80 tile grid editor with pan, zoom, and acre overlay
+- **Town Map** — full tile grid editor with pan, zoom, acre overlay, and color legend
 - **Acre Editor** — 7x7 acre type grid (terrain, ocean, river, transitions)
 - **Buildings** — 35 building placements + 100 signs with X/Y coordinates
 - **Grass Wear** — color-mapped visualization from dead (brown) to lush (green)
@@ -68,7 +69,8 @@ Container formats: `.dat` (Wii raw), `.gci` (Dolphin/GC), `.gcs` (GC export), `.
 ### Collections
 - **Museum** — fossils (60), fish (64), insects (64), art (28) with per-player donation tracking
 - **Encyclopedia** — fish and insect completion
-- **Catalog** — full bitmap-based item discovery tracking
+- **Catalog** — full bitmap-based item discovery tracking (ACCF + GC 5-region bitfield with encyclopedia masking)
+- **Music** — K.K. Slider song completion (GC)
 - **Fill / Clear** buttons for bulk operations
 
 ### Patterns
@@ -183,7 +185,7 @@ actoolkit-linux/
 
 ## Credits
 
-Based on the original **ACToolkit** Delphi source. GC string encoding and item data from the [Animal Crossing decompilation project](https://github.com/practice-1/ac-decomp). GC item and NPC reference data contributed by Nika.
+Based on the original **ACToolkit** Delphi source. GC string encoding and item data from the [Animal Crossing decompilation project](https://github.com/practice-1/ac-decomp). GC item and NPC reference data contributed by Nika. Deluxe mod save references contributed by FinalHaunt.
 
 ---
 
