@@ -292,11 +292,11 @@ GC_PROFILE = GameProfile(
     buried_data_offset=0x20F1C,
     buried_data_size=0x3C0,
 
-    # Nook's shop (rel:save) - TODO: find exact offsets
-    nook_style_offset=0,
-    nook_items_offset=0,
-    nook_item_count=0,
-    nook_item_stride=0,
+    # Nook's shop (rel:save) — from ac-decomp Shop_c struct at save+0x20340
+    nook_style_offset=0x20466,   # shop_info u16: bits [7:6] = shop level (0-3)
+    nook_items_offset=0x2040E,   # 39 × u16 item codes (2-byte stride)
+    nook_item_count=39,
+    nook_item_stride=2,
 
     # Gate
     gate_style_offset=0,

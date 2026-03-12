@@ -983,14 +983,19 @@ class SaveHandler:
 
     def get_nook_style(self) -> int:
         if self.is_gc and self.profile and self.profile.nook_style_offset:
-            return self.read_u8(self._soff(self.profile.nook_style_offset))
+            # GC: shop level is in bits [7:6] of the shop_info byte
+            byte_val = self.read_u8(self._soff(self.profile.nook_style_offset))
+            return (byte_val >> 6) & 3
         if self.is_gc:
-            return 0  # GC vanilla: nook style offset not mapped
+            return 0
         return self.read_u8(0x630C3)
 
     def set_nook_style(self, val: int) -> None:
         if self.is_gc and self.profile and self.profile.nook_style_offset:
-            self.write_u8(self._soff(self.profile.nook_style_offset), val & 0xFF)
+            # GC: shop level in bits [7:6], preserve lower 6 bits (paint color, flags)
+            off = self._soff(self.profile.nook_style_offset)
+            existing = self.read_u8(off)
+            self.write_u8(off, (existing & 0x3F) | ((val & 3) << 6))
             return
         if self.is_gc:
             return
@@ -1353,18 +1358,35 @@ class SaveHandler:
             self.write_u16(base + i * 2, val)
 
     def get_nook_items(self) -> list[int]:
-        """
-        Read 36 u16 Nook shop items at 0x630C8.  ACCF only.
+        """Read Nook shop items.
 
-        Items are stored with a 4-byte stride (2 bytes item + 2 bytes padding).
+        ACCF: 36 items at 0x630C8 with 4-byte stride.
+        GC:   up to 39 items at profile offset with 2-byte stride.
         """
+        if self.is_gc and self.profile and self.profile.nook_items_offset:
+            base = self._soff(self.profile.nook_items_offset)
+            count = self.profile.nook_item_count or 39
+            stride = self.profile.nook_item_stride or 2
+            return [self.read_u16(base + i * stride) for i in range(count)]
         if self.is_gc:
             return []
         base = 0x630C8
         return [self.read_u16(base + i * 4) for i in range(36)]
 
     def set_nook_items(self, items: list[int]) -> None:
-        """Write 36 u16 Nook shop items with 4-byte stride.  ACCF only."""
+        """Write Nook shop items.
+
+        ACCF: 36 items at 0x630C8 with 4-byte stride, empty = 0xFFF1.
+        GC:   up to 39 items at profile offset with 2-byte stride, empty = 0x0000.
+        """
+        if self.is_gc and self.profile and self.profile.nook_items_offset:
+            base = self._soff(self.profile.nook_items_offset)
+            count = self.profile.nook_item_count or 39
+            stride = self.profile.nook_item_stride or 2
+            for i in range(count):
+                val = items[i] if i < len(items) else 0x0000
+                self.write_u16(base + i * stride, val)
+            return
         if self.is_gc:
             return
         base = 0x630C8
