@@ -1391,7 +1391,10 @@ class SaveHandler:
             stride = self.profile.nook_item_stride or 2
             for i in range(count):
                 val = items[i] if i < len(items) else 0x0000
-                self.write_u16(base + i * stride, val)
+                try:
+                    self.write_u16(base + i * stride, val & 0xFFFF)
+                except (IndexError, struct.error):
+                    break
             return
         if self.is_gc:
             return
