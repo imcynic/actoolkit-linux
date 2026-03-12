@@ -1367,7 +1367,13 @@ class SaveHandler:
             base = self._soff(self.profile.nook_items_offset)
             count = self.profile.nook_item_count or 39
             stride = self.profile.nook_item_stride or 2
-            return [self.read_u16(base + i * stride) for i in range(count)]
+            result = []
+            for i in range(count):
+                try:
+                    result.append(self.read_u16(base + i * stride))
+                except (IndexError, struct.error):
+                    break
+            return result
         if self.is_gc:
             return []
         base = 0x630C8
