@@ -1326,14 +1326,42 @@ class SaveHandler:
             self.write_u16(base + i * 2, val)
 
     def get_lost_found(self) -> list[int]:
-        """Read 12 u16 lost-and-found items (2x6) at 0x72DDA.  ACCF only."""
+        """Read lost-and-found items.
+
+        ACCF: 12 items at 0x72DDA (gate lost & found).
+        GC:   up to 20 items at profile offset (police station).
+        """
+        if self.is_gc and self.profile and self.profile.lost_found_offset:
+            base = self._soff(self.profile.lost_found_offset)
+            count = self.profile.lost_found_count or 20
+            result = []
+            for i in range(count):
+                try:
+                    result.append(self.read_u16(base + i * 2))
+                except (IndexError, struct.error):
+                    break
+            return result
         if self.is_gc:
             return []
         base = 0x72DDA
         return [self.read_u16(base + i * 2) for i in range(12)]
 
     def set_lost_found(self, items: list[int]) -> None:
-        """Write 12 u16 lost-and-found items.  ACCF only."""
+        """Write lost-and-found items.
+
+        ACCF: 12 items at 0x72DDA, empty = 0xFFF1.
+        GC:   up to 20 items at profile offset, empty = 0x0000.
+        """
+        if self.is_gc and self.profile and self.profile.lost_found_offset:
+            base = self._soff(self.profile.lost_found_offset)
+            count = self.profile.lost_found_count or 20
+            for i in range(count):
+                val = items[i] if i < len(items) else 0x0000
+                try:
+                    self.write_u16(base + i * 2, val & 0xFFFF)
+                except (IndexError, struct.error):
+                    break
+            return
         if self.is_gc:
             return
         base = 0x72DDA

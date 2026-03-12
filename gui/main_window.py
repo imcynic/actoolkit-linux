@@ -591,8 +591,10 @@ class MainWindow(QMainWindow):
         for action in self.nook_style_actions:
             action.setEnabled(has_nook)
 
-        # ACCF-only features (Lost & Found, Recycle Bin don't exist in GC)
-        self.action_lost_found.setEnabled(not is_gc)
+        # Lost & Found: enable if profile has lost_found_offset (ACCF gate, GC police station)
+        has_lost_found = bool(self.save_handler.profile and self.save_handler.profile.lost_found_offset)
+        self.action_lost_found.setEnabled(has_lost_found)
+        # Recycle Bin is ACCF-only
         self.action_recycle_bin.setEnabled(not is_gc)
 
         # Conversion tools: enable based on loaded game type

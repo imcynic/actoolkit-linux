@@ -354,10 +354,10 @@ GC_PROFILE = GameProfile(
     drawers_count=0,
     drawers_is_global=False,
 
-    # Lost & Found - TODO
-    lost_found_offset=0,
-    lost_found_count=0,
-    recycle_offset=0,
+    # Lost & Found — police station (PoliceBox_c at save+0x20ED0, 20 × u16)
+    lost_found_offset=0x20ED0,
+    lost_found_count=20,
+    recycle_offset=0,       # GC has no recycle bin
     recycle_count=0,
 
     # Feature flags
