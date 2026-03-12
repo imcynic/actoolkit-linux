@@ -583,6 +583,12 @@ class MainWindow(QMainWindow):
         # Buildings editor is ACCF-only (GC uses different structure)
         self.action_building_editor.setEnabled(not is_gc)
 
+        # ACCF-only inventory features (GC returns empty, so disable the UI)
+        self.action_nook_items.setEnabled(not is_gc)
+        self.action_clear_sold_out.setEnabled(not is_gc)
+        self.action_lost_found.setEnabled(not is_gc)
+        self.action_recycle_bin.setEnabled(not is_gc)
+
         # Nook's style is different on GC
         for action in self.nook_style_actions:
             action.setEnabled(not is_gc)

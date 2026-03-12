@@ -37,7 +37,9 @@ GRID_W = 80
 GRID_H = 80
 ACRE_SIZE = 16  # tiles per acre edge
 TOTAL_TILES = GRID_W * GRID_H  # 6400
-EMPTY_ITEM = 0xFFF1
+EMPTY_ITEM_ACCF = 0xFFF1
+EMPTY_ITEM_GC = 0x0000
+EMPTY_ITEM = 0xFFF1  # default; overridden per save in TownEditorDialog
 
 MIN_CELL_PX = 2
 MAX_CELL_PX = 32
@@ -60,8 +62,8 @@ BLDG_DELETE = 13
 # Colour mapping helpers
 # ---------------------------------------------------------------------------
 
-def _item_color(code: int) -> QColor:
-    """Return the display colour for a 16-bit item code."""
+def _accf_item_color(code: int) -> QColor:
+    """Return the display colour for an ACCF 16-bit item code."""
     if code == EMPTY_ITEM:
         return QColor(255, 255, 255)
 
@@ -101,6 +103,93 @@ def _item_color(code: int) -> QColor:
     return QColor(128, 5, 23)
 
 
+def _gc_item_color(code: int) -> QColor:
+    """Return the display colour for a GC 16-bit item code.
+
+    GC item ID ranges (from ac-decomp):
+      0x0000       = empty
+      0x0004-0x001F = trees/saplings (cedar, fruit, various growth stages)
+      0x0020-0x005D = ground patterns, stumps
+      0x005E-0x0067 = weeds
+      0x0068-0x0077 = flowers
+      0x0078-0x0084 = rocks
+      0x0085-0x009F = buried items, dig spots
+      0x0800-0x0FFF = surface/dropped items on ground
+      0x1000-0x1FFF = furniture bank 0 (stride 4: S/E/N/W)
+      0x2000-0x2FFF = holdable items (tools, fish, bugs, clothing, etc.)
+      0x3000-0x3FFF = furniture bank 1 (stride 4: S/E/N/W)
+      0x5000-0x5FFF = special/event items
+      0xA000-0xBFFF = building/NPC markers
+      0xFFFF       = invalid/unused
+    """
+    # Empty
+    if code == 0x0000:
+        return QColor(255, 255, 255)
+
+    # Invalid / unused (ocean/border tiles)
+    if code == 0xFFFF:
+        return QColor(200, 200, 200)
+
+    # Special terrain (sand, water, bridge)
+    if 0x0001 <= code <= 0x0003:
+        return QColor(160, 160, 160)
+
+    # Trees and saplings
+    if 0x0004 <= code <= 0x001F:
+        return QColor(0, 200, 0)
+
+    # Ground patterns / stumps
+    if 0x0020 <= code <= 0x005D:
+        return QColor(255, 221, 170)
+
+    # Weeds
+    if 0x005E <= code <= 0x0067:
+        return QColor(206, 134, 0)
+
+    # Flowers
+    if 0x0068 <= code <= 0x0077:
+        return QColor(255, 51, 153)
+
+    # Rocks
+    if 0x0078 <= code <= 0x0084:
+        return QColor(0, 0, 0)
+
+    # Buried items / dig spots
+    if 0x0085 <= code <= 0x009F:
+        return QColor(139, 119, 101)
+
+    # Other low-range terrain
+    if 0x00A0 <= code <= 0x07FF:
+        return QColor(160, 160, 160)
+
+    # Surface / dropped items on ground
+    if 0x0800 <= code <= 0x0FFF:
+        return QColor(255, 165, 0)
+
+    # Furniture bank 0
+    if 0x1000 <= code <= 0x1FFF:
+        return QColor(0, 255, 255)
+
+    # Holdable items (tools, fish, bugs, clothing, stationery, etc.)
+    if 0x2000 <= code <= 0x2FFF:
+        return QColor(255, 255, 0)
+
+    # Furniture bank 1
+    if 0x3000 <= code <= 0x3FFF:
+        return QColor(0, 255, 255)
+
+    # Special / event items
+    if 0x4000 <= code <= 0x9FFF:
+        return QColor(255, 165, 0)
+
+    # Building / NPC markers
+    if 0xA000 <= code <= 0xFEFF:
+        return QColor(128, 5, 23)
+
+    # Other high-range markers (0xFF00-0xFFFE)
+    return QColor(160, 160, 160)
+
+
 # ---------------------------------------------------------------------------
 # Grid Widget  (the performance-critical piece)
 # ---------------------------------------------------------------------------
@@ -122,6 +211,8 @@ class TownGridWidget(QWidget):
         self._items: list[int] = [EMPTY_ITEM] * TOTAL_TILES
         self._buried: list[int] = [0] * ((TOTAL_TILES + 7) // 8)  # bit flags
         self._grass: list[int] = [0] * TOTAL_TILES
+        self._is_gc: bool = False  # GC vs ACCF color mapping
+        self._empty_code: int = EMPTY_ITEM_ACCF  # empty sentinel for this game
 
         self._show_grid = True
         self._show_acre_grid = True
@@ -287,7 +378,7 @@ class TownGridWidget(QWidget):
         cp = self._cell_px
         idx = y * GRID_W + x
         code = self._items[idx] if idx < len(self._items) else EMPTY_ITEM
-        color = _item_color(code)
+        color = _gc_item_color(code) if self._is_gc else _accf_item_color(code)
 
         # Grass overlay: modulate alpha based on grass quality
         if self._show_grass and idx < len(self._grass):
@@ -508,9 +599,13 @@ class TownEditorDialog(QDialog):
         self._dirty = False
         self._current_tool = TOOL_CHECK
         self._current_bldg_tool = -1  # no building tool active initially
-        self._selected_item_code: int = EMPTY_ITEM
+        self._empty = EMPTY_ITEM_GC if getattr(save_handler, 'is_gc', False) else EMPTY_ITEM_ACCF
+        self._selected_item_code: int = self._empty
 
-        self.setWindowTitle("Town Editor - Animal Crossing: City Folk")
+        game_title = "Animal Crossing: City Folk"
+        if getattr(save_handler, 'is_gc', False) and hasattr(save_handler, 'profile'):
+            game_title = getattr(save_handler.profile, 'display_name', 'GameCube')
+        self.setWindowTitle(f"Town Editor - {game_title}")
         self.setMinimumSize(960, 640)
         self.resize(1280, 800)
         self.setModal(True)
@@ -584,7 +679,7 @@ class TownEditorDialog(QDialog):
         right_layout.addWidget(self._item_tree, stretch=1)
 
         # Selected item display
-        self._selected_label = QLabel("Selected: Empty (0xFFF1)")
+        self._selected_label = QLabel(f"Selected: Empty (0x{self._empty:04X})")
         self._selected_label.setWordWrap(True)
         right_layout.addWidget(self._selected_label)
 
@@ -728,6 +823,11 @@ class TownEditorDialog(QDialog):
     def _load_data(self):
         """Read town data from save handler into the grid widget."""
         sh = self._save_handler
+
+        # Set game-type flag for correct color mapping and empty sentinel
+        self._grid._is_gc = getattr(sh, 'is_gc', False)
+        self._grid._empty_code = self._empty
+
         try:
             items = sh.get_town_items()
             self._grid.set_items(items)
@@ -843,7 +943,7 @@ class TownEditorDialog(QDialog):
 
         elif self._current_tool == TOOL_DELETE:
             old_code = code
-            self._grid.set_item(gx, gy, EMPTY_ITEM)
+            self._grid.set_item(gx, gy, self._empty)
             self._dirty = True
             self._status(f"({gx}, {gy}) Deleted 0x{old_code:04X} ({_get_item_name(old_code)})")
 
@@ -897,7 +997,7 @@ class TownEditorDialog(QDialog):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
-                self._grid.set_item(gx, gy, EMPTY_ITEM)
+                self._grid.set_item(gx, gy, self._empty)
                 self._dirty = True
                 self._status(f"Deleted building at ({gx},{gy})")
 
@@ -953,8 +1053,15 @@ class TownEditorDialog(QDialog):
         count = 0
         for idx in range(TOTAL_TILES):
             code = self._grid._items[idx]
-            if code in range(0x0057, 0x005B) or code in range(0x00DE, 0x00E2):
-                self._grid._items[idx] = EMPTY_ITEM
+            is_weed = False
+            if self._grid._is_gc:
+                # GC weeds: 0x005E-0x0067
+                is_weed = 0x005E <= code <= 0x0067
+            else:
+                # ACCF weeds: 0x0057-0x005A, 0x00DE-0x00E1
+                is_weed = code in range(0x0057, 0x005B) or code in range(0x00DE, 0x00E2)
+            if is_weed:
+                self._grid._items[idx] = self._empty
                 count += 1
         if count:
             self._dirty = True
@@ -1065,7 +1172,7 @@ class TownEditorDialog(QDialog):
                 if offset + 2 <= len(data):
                     code = struct.unpack(">H", data[offset:offset + 2])[0]
                 else:
-                    code = EMPTY_ITEM
+                    code = self._empty
                 items.append(code)
             self._grid.set_items(items)
             self._dirty = True
