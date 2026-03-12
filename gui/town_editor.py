@@ -122,72 +122,76 @@ def _gc_item_color(code: int) -> QColor:
       0xA000-0xBFFF = building/NPC markers
       0xFFFF       = invalid/unused
     """
-    # Empty
+    # Empty = grass
     if code == 0x0000:
-        return QColor(255, 255, 255)
+        return QColor(76, 196, 80)
 
-    # Invalid / unused (ocean/border tiles)
+    # Water / river / ocean boundary tiles
     if code == 0xFFFF:
-        return QColor(200, 200, 200)
+        return QColor(100, 180, 240)
+
+    # Water variant
+    if code == 0xFF00:
+        return QColor(80, 150, 220)
 
     # Special terrain (sand, water, bridge)
     if 0x0001 <= code <= 0x0003:
-        return QColor(160, 160, 160)
+        return QColor(76, 196, 80)
 
-    # Trees and saplings
+    # Trees and saplings — dark green, clearly visible on grass
     if 0x0004 <= code <= 0x001F:
-        return QColor(0, 200, 0)
+        return QColor(20, 120, 20)
 
-    # Ground patterns / stumps
+    # Ground patterns / stumps — muted brown
     if 0x0020 <= code <= 0x005D:
-        return QColor(255, 221, 170)
+        return QColor(120, 100, 70)
 
-    # Weeds
+    # Weeds — slightly darker grass
     if 0x005E <= code <= 0x0067:
-        return QColor(206, 134, 0)
+        return QColor(60, 160, 50)
 
-    # Flowers
+    # Flowers — pink (accent color like reference)
     if 0x0068 <= code <= 0x0077:
-        return QColor(255, 51, 153)
+        return QColor(255, 105, 180)
 
-    # Rocks
+    # Rocks — dark gray
     if 0x0078 <= code <= 0x0084:
-        return QColor(0, 0, 0)
+        return QColor(80, 80, 80)
 
-    # Buried items / dig spots
+    # Buried items / dig spots — subtle brown
     if 0x0085 <= code <= 0x009F:
-        return QColor(139, 119, 101)
+        return QColor(120, 100, 70)
 
-    # Other low-range terrain
+    # Other low-range terrain — grass
     if 0x00A0 <= code <= 0x07FF:
-        return QColor(160, 160, 160)
+        return QColor(76, 196, 80)
 
-    # Surface / dropped items on ground
+    # Surface / dropped items — muted tan (subtle on green)
     if 0x0800 <= code <= 0x0FFF:
-        return QColor(255, 165, 0)
+        return QColor(140, 115, 70)
 
-    # Furniture bank 0
+    # Furniture bank 0 — muted teal
     if 0x1000 <= code <= 0x1FFF:
-        return QColor(0, 255, 255)
+        return QColor(60, 140, 130)
 
-    # Holdable items (tools, fish, bugs, clothing, stationery, etc.)
+    # Holdable items — muted gold
     if 0x2000 <= code <= 0x2FFF:
-        return QColor(255, 255, 0)
+        return QColor(160, 140, 50)
 
-    # Furniture bank 1
+    # Furniture bank 1 — muted teal
     if 0x3000 <= code <= 0x3FFF:
-        return QColor(0, 255, 255)
+        return QColor(60, 140, 130)
 
-    # Special / event items
+    # Special / event items — muted tan
     if 0x4000 <= code <= 0x9FFF:
-        return QColor(255, 165, 0)
+        return QColor(140, 115, 70)
 
-    # Building / NPC markers
+    # Building / NPC markers — dark, distinct from terrain
     if 0xA000 <= code <= 0xFEFF:
-        return QColor(128, 5, 23)
+        return QColor(50, 50, 50)
 
-    # Other high-range markers (0xFF00-0xFFFE)
-    return QColor(160, 160, 160)
+    # Other high-range markers — water
+    return QColor(100, 180, 240)
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +653,44 @@ class TownEditorDialog(QDialog):
         self._scroll.setWidgetResizable(False)
         self._scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         left_layout.addWidget(self._scroll, stretch=1)
+
+        # Color legend
+        is_gc = getattr(self._save_handler, 'is_gc', False)
+        if is_gc:
+            legend_entries = [
+                ("Grass", QColor(76, 196, 80)),
+                ("Water", QColor(100, 180, 240)),
+                ("Trees", QColor(20, 120, 20)),
+                ("Flowers", QColor(255, 105, 180)),
+                ("Weeds", QColor(60, 160, 50)),
+                ("Rocks", QColor(80, 80, 80)),
+                ("Items", QColor(140, 115, 70)),
+                ("Furniture", QColor(60, 140, 130)),
+                ("Buildings", QColor(50, 50, 50)),
+            ]
+        else:
+            legend_entries = [
+                ("Empty", QColor(255, 255, 255)),
+                ("Trees", QColor(0, 255, 0)),
+                ("Flowers", QColor(255, 51, 153)),
+                ("Weeds", QColor(206, 134, 0)),
+                ("Rocks", QColor(0, 0, 0)),
+                ("Patterns", QColor(255, 221, 170)),
+                ("Items", QColor(255, 255, 0)),
+                ("Furniture", QColor(0, 255, 255)),
+                ("Buildings", QColor(128, 5, 23)),
+            ]
+        legend_layout = QHBoxLayout()
+        legend_layout.setContentsMargins(4, 2, 4, 2)
+        legend_layout.setSpacing(8)
+        for name, color in legend_entries:
+            swatch = QLabel()
+            swatch.setFixedSize(12, 12)
+            swatch.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
+            legend_layout.addWidget(swatch)
+            legend_layout.addWidget(QLabel(name))
+        legend_layout.addStretch()
+        left_layout.addLayout(legend_layout)
 
         # Status bar
         self._status_label = QLabel("Ready")
