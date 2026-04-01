@@ -222,6 +222,11 @@ class GameProfile:
     # --- DLC (ACCF only) ---
     has_dlc: bool = False
 
+    # --- Island (rel:save) ---
+    island_offset: int = 0       # Island_c struct offset
+    island_name_offset: int = 0  # Island name (first 8 bytes of Island_c)
+    island_name_max: int = 8     # Max island name length
+
     # --- Feature flags ---
     has_island: bool = False
     has_emotions: bool = True
@@ -359,6 +364,11 @@ GC_PROFILE = GameProfile(
     lost_found_count=20,
     recycle_offset=0,       # GC has no recycle bin
     recycle_count=0,
+
+    # Island (rel:save) — from ac-decomp: Island_c at save+0x022540, size 0x1900
+    island_offset=0x022540,
+    island_name_offset=0x022540,  # Island name is first 8 bytes of Island_c
+    island_name_max=8,
 
     # Feature flags
     has_dlc=False,
@@ -500,6 +510,11 @@ EPLUS_PROFILE = GameProfile(
     lost_found_count=0,
     recycle_offset=0,
     recycle_count=0,
+
+    # Island (rel:save) — e+ uses same structure as vanilla GC
+    island_offset=0x022540,
+    island_name_offset=0x022540,
+    island_name_max=6,            # e+ uses 6-byte names
 
     # Feature flags
     has_dlc=False,

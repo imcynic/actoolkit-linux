@@ -885,6 +885,28 @@ class SaveHandler:
         po = self.player_offset(p)
         return self.read_u16(0x7EE2 + po)
 
+    # -- island name --------------------------------------------------------
+
+    def get_island_name(self) -> str:
+        """Get the island name (GC/e+ only)."""
+        if not self.profile or not self.profile.has_island:
+            return ""
+        if not self.profile.island_name_offset:
+            return ""
+        name_max = self.profile.island_name_max
+        return self.read_string(self._soff(self.profile.island_name_offset), name_max)
+
+    def set_island_name(self, name: str) -> None:
+        """Set the island name (GC/e+ only)."""
+        if not name or not self.profile or not self.profile.has_island:
+            return
+        if not self.profile.island_name_offset:
+            return
+        name_max = self.profile.island_name_max
+        self.write_string(self._soff(self.profile.island_name_offset), name, name_max)
+
+    # -- special byte -------------------------------------------------------
+
     def get_special_byte(self, p: int) -> int:
         if self.is_gc:
             return 0  # GC doesn't have this field

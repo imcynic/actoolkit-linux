@@ -34,6 +34,7 @@ class PlayerInfoPanel(QGroupBox):
     appearance_requested = pyqtSignal()
     emotions_requested = pyqtSignal()
     town_name_set_requested = pyqtSignal()
+    island_name_set_requested = pyqtSignal()
     house_requested = pyqtSignal(str)  # room letter A/B/C/D
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -99,6 +100,16 @@ class PlayerInfoPanel(QGroupBox):
         stats_grid.addWidget(self.town_btn, row, 2)
 
         row += 1
+        # Island
+        stats_grid.addWidget(QLabel("Island:"), row, 0, Qt.AlignmentFlag.AlignRight)
+        self.island_label = QLabel("---")
+        stats_grid.addWidget(self.island_label, row, 1)
+        self.island_btn = QPushButton("Set")
+        self.island_btn.setFixedWidth(48)
+        self.island_btn.clicked.connect(self.island_name_set_requested)
+        stats_grid.addWidget(self.island_btn, row, 2)
+
+        row += 1
         # Donations
         stats_grid.addWidget(QLabel("Donations:"), row, 0, Qt.AlignmentFlag.AlignRight)
         self.donations_label = QLabel("--- Bells")
@@ -162,10 +173,23 @@ class PlayerInfoPanel(QGroupBox):
         self.town_label.setText(town)
         self.donations_label.setText(f"{donations:,} Bells")
 
+    def update_island_info(self, island_name: str, has_island: bool) -> None:
+        self.island_label.setText(island_name if island_name else "---")
+        self.island_label.setVisible(has_island)
+        self.island_btn.setVisible(has_island)
+        # Find and hide/show the "Island:" label too
+        for i in range(self.layout().count()):
+            item = self.layout().itemAt(i)
+            if item and item.layout():
+                for j in range(item.layout().count()):
+                    w = item.layout().itemAt(j)
+                    if w and w.widget() and isinstance(w.widget(), QLabel) and w.widget().text() == "Island:":
+                        w.widget().setVisible(has_island)
+
     def clear_info(self) -> None:
         self.header_label.setText("No file loaded")
         for lbl in (self.wallet_label, self.bank_label, self.points_label,
-                     self.town_label, self.donations_label):
+                     self.town_label, self.island_label, self.donations_label):
             lbl.setText("---")
 
 
@@ -496,6 +520,7 @@ class MainWindow(QMainWindow):
         self.player_panel.bank_set_requested.connect(self._on_set_bank)
         self.player_panel.points_set_requested.connect(self._on_set_points)
         self.player_panel.town_name_set_requested.connect(self._on_set_town_name)
+        self.player_panel.island_name_set_requested.connect(self._on_set_island_name)
         self.player_panel.pockets_requested.connect(self._on_pockets)
         self.player_panel.drawers_requested.connect(self._on_drawers)
         self.player_panel.appearance_requested.connect(self._on_appearance)
@@ -658,6 +683,10 @@ class MainWindow(QMainWindow):
             town=self.save_handler.get_town_name(p),
             donations=self.save_handler.get_donation(),
         )
+        # Update island info
+        has_island = bool(self.save_handler.profile and self.save_handler.profile.has_island)
+        island_name = self.save_handler.get_island_name() if has_island else ""
+        self.player_panel.update_island_info(island_name, has_island)
 
     def _sync_settings_menus(self) -> None:
         """Sync radio menus to match current save data."""
@@ -885,6 +914,32 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.critical(self, "Error", f"Failed to set town name:\n{e}")
+                return
+            self._refresh_player_info()
+            self._mark_modified()
+
+    def _on_set_island_name(self) -> None:
+        if not self.save_handler:
+            return
+        if not self.save_handler.profile or not self.save_handler.profile.has_island:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Island", "This game version does not have an island.")
+            return
+        current = self.save_handler.get_island_name()
+        max_len = self.save_handler.profile.island_name_max
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(
+            self, "Set Island Name",
+            f"Island name (max {max_len} characters):",
+            text=current,
+        )
+        if ok and name and name.strip():
+            name = name.strip()[:max_len]
+            try:
+                self.save_handler.set_island_name(name)
+            except Exception as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "Error", f"Failed to set island name:\n{e}")
                 return
             self._refresh_player_info()
             self._mark_modified()
