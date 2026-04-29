@@ -1924,16 +1924,24 @@ class SaveHandler:
                     self.write_u16(base + v_id2, 0)
             else:
                 # If the villager ID is actually changing, zero the per-slot
-                # model/init block (everything before v_id) so the game
-                # re-initializes the villager from the new ID on next load.
-                # Without this the game keeps using the stale model data
-                # and silently ignores the new ID.
+                # model/init block (everything before v_id) AND leave the
+                # exists byte at 0 so the game re-initializes the villager
+                # from the new ID on next load (the "moving in" state).
+                # The empirical working pattern observed in real saves is:
+                #   exists = 0x00, model block = all zeros, v_id = new id.
+                # Setting exists=0x10 here would tell the game "model is
+                # already initialized, use it" — but the model is zeroed,
+                # so the game ignores the new ID and keeps the old villager.
                 existing_id = self.read_u16(base + v_id)
                 if existing_id != npc_id and v_id > 0:
                     self._check_offset(base, v_id)
                     self.data[base : base + v_id] = b"\x00" * v_id
                     self.modified = True
-                self.write_u8(base + v_exists, 0x10)
+                    # exists is already 0 from the zero-fill; do NOT set 0x10
+                else:
+                    # ID unchanged — preserve existing slot state, just
+                    # ensure exists is set (re-Apply on an unmodified slot).
+                    self.write_u8(base + v_exists, 0x10)
                 self.write_u16(base + v_id, npc_id)
                 if v_id2 >= 0:
                     self.write_u16(base + v_id2, npc_id)
