@@ -1871,7 +1871,14 @@ class SaveHandler:
             npc_id = self.read_u16(base + self.profile.v_id)
             return npc_id != 0
         v_exists = self.profile.v_exists if self.profile else self._VOFF_EXISTS
-        return self.read_u8(base + v_exists) != 0
+        if self.read_u8(base + v_exists) != 0:
+            return True
+        # ACCF "moved-in but model not built yet" case: exists byte is 0
+        # but the villager ID at +0x1824 is set.  The game still renders
+        # this villager (initializing the model on next load), so the
+        # editor must show it too.
+        v_id = self.profile.v_id if self.profile else self._VOFF_NPC_ID
+        return self.read_u16(base + v_id) != 0
 
     def get_resident_ids(self) -> list[int]:
         """Read all resident NPC IDs from the villager structs.
@@ -1916,6 +1923,16 @@ class SaveHandler:
                 if v_id2 >= 0:
                     self.write_u16(base + v_id2, 0)
             else:
+                # If the villager ID is actually changing, zero the per-slot
+                # model/init block (everything before v_id) so the game
+                # re-initializes the villager from the new ID on next load.
+                # Without this the game keeps using the stale model data
+                # and silently ignores the new ID.
+                existing_id = self.read_u16(base + v_id)
+                if existing_id != npc_id and v_id > 0:
+                    self._check_offset(base, v_id)
+                    self.data[base : base + v_id] = b"\x00" * v_id
+                    self.modified = True
                 self.write_u8(base + v_exists, 0x10)
                 self.write_u16(base + v_id, npc_id)
                 if v_id2 >= 0:
