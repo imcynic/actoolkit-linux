@@ -1923,25 +1923,29 @@ class SaveHandler:
                 if v_id2 >= 0:
                     self.write_u16(base + v_id2, 0)
             else:
-                # If the villager ID is actually changing, zero the per-slot
-                # model/init block (everything before v_id) AND leave the
-                # exists byte at 0 so the game re-initializes the villager
-                # from the new ID on next load (the "moving in" state).
-                # The empirical working pattern observed in real saves is:
+                # ACCF villager replace: ALWAYS zero the per-slot
+                # model/init block (everything before v_id) and leave the
+                # exists byte at 0 — the "moving in" state.  The empirical
+                # working pattern observed in real saves is:
                 #   exists = 0x00, model block = all zeros, v_id = new id.
-                # Setting exists=0x10 here would tell the game "model is
-                # already initialized, use it" — but the model is zeroed,
-                # so the game ignores the new ID and keeps the old villager.
-                existing_id = self.read_u16(base + v_id)
-                if existing_id != npc_id and v_id > 0:
+                # On next load the game re-initializes the villager from
+                # v_id and re-populates the model block itself.
+                #
+                # This is unconditional (not gated on existing_id != npc_id)
+                # because saves previously written by a buggy editor can
+                # have a stale model block whose v_id matches the new id —
+                # in that case the model is wrong but the id check would
+                # incorrectly skip the reset, leaving the game rendering
+                # the old villager forever.
+                #
+                # All editable per-villager fields (personality, catchphrase,
+                # shirt, furniture, wallpaper, carpet, umbrella, kk_song)
+                # live AFTER v_id (offsets 0x1826+), so they are not
+                # affected by zeroing 0x00..v_id.
+                if v_id > 0:
                     self._check_offset(base, v_id)
                     self.data[base : base + v_id] = b"\x00" * v_id
                     self.modified = True
-                    # exists is already 0 from the zero-fill; do NOT set 0x10
-                else:
-                    # ID unchanged — preserve existing slot state, just
-                    # ensure exists is set (re-Apply on an unmodified slot).
-                    self.write_u8(base + v_exists, 0x10)
                 self.write_u16(base + v_id, npc_id)
                 if v_id2 >= 0:
                     self.write_u16(base + v_id2, npc_id)
