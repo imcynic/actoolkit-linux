@@ -264,6 +264,14 @@ class NpcEditorDialog(QDialog):
             else:
                 self._slot_data.append(None)
 
+        # Pack.bin entries pending write per slot — populated by _on_replace
+        # when the user picks a new villager from the database.  On Apply
+        # these entries' identity data (names, catchphrases, outfit) gets
+        # written into the slot via SaveHandler.write_villager_template;
+        # without this the game keeps rendering the previous resident
+        # because v_id alone doesn't determine what the game displays.
+        self._pending_replace: dict[int, object] = {}
+
         self._current_slot = -1
 
         self._build_ui()
@@ -793,8 +801,17 @@ class NpcEditorDialog(QDialog):
         entry = self._get_npc_entry(new_id)
         name = entry.name_en if entry else f"#{new_id}"
 
-        self.resident_ids[row]
         self.resident_ids[row] = new_id
+
+        # Remember the pack.bin entry so _on_apply can write the full
+        # identity template (names + catchphrases + default outfit).
+        # Only entries with raw_bytes (real pack.bin entries) qualify;
+        # fallback entries from the embedded VANILLA_VILLAGERS dict
+        # don't have the multi-language data we'd need.
+        if entry is not None and getattr(entry, "raw_bytes", None):
+            self._pending_replace[row] = entry
+        else:
+            self._pending_replace.pop(row, None)
 
         # Create slot data for the new villager (preserve save data if slot
         # was already occupied, otherwise create from NPC template defaults)
@@ -834,6 +851,7 @@ class NpcEditorDialog(QDialog):
 
         self.resident_ids[row] = EMPTY_NPC_ID
         self._slot_data[row] = None
+        self._pending_replace.pop(row, None)
         self._populate_residents()
         self.resident_table.setCurrentCell(row, 0)
         self._show_details(None, EMPTY_NPC_ID, row)
@@ -863,8 +881,35 @@ class NpcEditorDialog(QDialog):
 
     def _on_apply(self):
         try:
-            self.save_handler.set_resident_ids(self.resident_ids)
-            # Write per-slot editable data
+            # First, write any pending template replacements.  This zeros
+            # the model block, writes v_id/v_id2, and copies all 8 names
+            # + 10 catchphrases + default outfit + personality from the
+            # pack.bin entry into the slot.  The game uses the slot-
+            # internal name strings to render the villager, so without
+            # this the game keeps showing the previous resident even
+            # though v_id has been changed.
+            for slot, entry in self._pending_replace.items():
+                npc_id = self.resident_ids[slot]
+                if npc_id == EMPTY_NPC_ID or npc_id == 0:
+                    continue
+                raw = getattr(entry, "raw_bytes", None)
+                if not raw:
+                    continue
+                self.save_handler.write_villager_template(slot, npc_id, raw)
+
+            # For non-replaced slots (or fallback-DB replacements without
+            # raw_bytes), fall back to the legacy v_id-only writer which
+            # zeros the model block but leaves the rest of the slot alone.
+            written_slots = set(self._pending_replace.keys())
+            for i, npc_id in enumerate(self.resident_ids):
+                if i in written_slots:
+                    continue
+                self.save_handler.set_resident_id(i, npc_id)
+
+            # Write per-slot editable data (personality, catchphrase,
+            # shirt, etc.) on top of the template — this lets the user's
+            # custom catchphrase/personality/etc. overwrite the
+            # pack.bin defaults.
             for i, sd in enumerate(self._slot_data):
                 if sd is not None and self.resident_ids[i] != EMPTY_NPC_ID:
                     sd.write_to_save(self.save_handler, i)

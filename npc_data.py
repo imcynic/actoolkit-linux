@@ -81,7 +81,7 @@ class NpcEntry:
     """Parsed NPC entry from pack.bin."""
 
     __slots__ = (
-        "index", "model", "shirt", "floor", "wall", "umbrella",
+        "index", "raw_bytes", "model", "shirt", "floor", "wall", "umbrella",
         "furniture", "kk_song", "names", "catchphrases",
         "species_id", "species", "personality_id", "personality",
         "birth_month", "birth_day", "fav_cloth_style", "least_cloth_style",
@@ -95,6 +95,9 @@ class NpcEntry:
             )
 
         self.index = index
+        # Keep the raw 408-byte entry so callers can copy template data
+        # (names, catchphrases, default outfit) verbatim into save slots.
+        self.raw_bytes = bytes(raw[:PACK_ENTRY_SIZE])
         self.model = raw[_OFF_MODEL]
         self.shirt = struct.unpack_from(">H", raw, _OFF_SHIRT)[0]
         self.floor = struct.unpack_from(">H", raw, _OFF_FLOOR)[0]

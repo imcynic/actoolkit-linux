@@ -1958,6 +1958,175 @@ class SaveHandler:
         for i, npc_id in enumerate(ids):
             self.set_resident_id(i, npc_id)
 
+    # ------------------------------------------------------------------
+    # ACCF villager template writer (pack.bin -> save slot)
+    # ------------------------------------------------------------------
+    #
+    # The ACCF save embeds per-villager identity data (names in 8 languages,
+    # catchphrases in 10 languages, default outfit, personality) inside each
+    # villager slot.  The game uses these slot-internal fields — not v_id —
+    # to display villager identity.  Writing only v_id leaves the previous
+    # villager's name/catchphrase strings in place and the game keeps
+    # rendering the old resident.  This method copies the identity fields
+    # from a 408-byte pack.bin entry into the save slot.
+
+    # Offsets within a 408-byte pack.bin entry (see npc_data.py).
+    _PACK_OFF_SHIRT     = 0x02
+    _PACK_OFF_FLOOR     = 0x04
+    _PACK_OFF_WALL      = 0x06
+    _PACK_OFF_UMBRELLA  = 0x08
+    _PACK_OFF_FURNITURE = 0x0A   # 11 × u16 = 22 bytes
+    _PACK_OFF_KK_SONG   = 0x20   # u16
+    _PACK_OFF_NAMES     = 0x22   # 8 × 18 bytes UTF-16 BE
+    _PACK_OFF_CATCH     = 0xB2   # 10 × 22 bytes UTF-16 BE
+    _PACK_OFF_PERS_FURN = 0x196  # high nibble = personality
+
+    # Offsets within the ACCF save villager slot.
+    _VOFF_NAMES_BASE   = 0x1858  # 8 × 18 bytes
+    _VOFF_NAMES_SIZE   = 8 * 18
+    _VOFF_CATCH_BASE   = 0x18EC  # 10 × 22 bytes
+    _VOFF_CATCH_SIZE   = 10 * 22
+
+    def write_villager_template(self, slot: int, npc_id: int, pack_entry: bytes) -> None:
+        """Write a complete villager template (names/catchphrases/outfit) to a slot.
+
+        Intended for ACCF only.  The 408-byte pack.bin entry is the
+        authoritative source for identity data the game uses to render
+        the villager.  This method:
+
+          1. Zeros the slot's model block (0x00..v_id) so the game
+             re-initializes graphics from v_id on next load.
+          2. Writes v_id and v_id2 (both copies the game maintains).
+          3. Copies the 8-language name array (144 bytes) to +0x1858.
+          4. Copies the 10-language catchphrase array (220 bytes) to +0x18EC.
+          5. Writes default outfit (shirt, floor, wall, umbrella,
+             furniture, kk_song) from the pack entry.
+          6. Writes the personality nibble from the pack entry to +0x230A.
+
+        The exists byte stays 0 (zeroed by step 1) — the "moving in"
+        state — so the game rebuilds the slot fully on next load.
+
+        Args:
+            slot: Villager slot index (0-9 for ACCF).
+            npc_id: Villager ID to write at v_id and v_id2.
+            pack_entry: 408-byte raw pack.bin entry for this villager.
+
+        Raises:
+            ValueError: If pack_entry is not 408 bytes, npc_id out of
+                range, slot out of range, or this game is not ACCF.
+        """
+        if self.is_gc:
+            raise ValueError(
+                "write_villager_template is ACCF-only; not supported on GC saves"
+            )
+        if not 0 <= npc_id <= 0xFFFF:
+            raise ValueError(f"NPC ID must be 0-65535, got {npc_id}")
+        if len(pack_entry) < 0x198:
+            raise ValueError(
+                f"pack_entry must be >= 408 bytes, got {len(pack_entry)}"
+            )
+
+        base = self._villager_offset(slot)  # also validates slot
+        if not self.profile:
+            raise RuntimeError("No game profile loaded")
+
+        v_id = self.profile.v_id          # 0x1824
+        v_id2 = self.profile.v_id2        # 0x2308
+        v_pers = self.profile.v_personality  # 0x230A
+        v_shirt = self.profile.v_shirt
+        v_carpet = self.profile.v_carpet
+        v_wallpaper = self.profile.v_wallpaper
+        v_umbrella = self.profile.v_umbrella
+        v_furniture = self.profile.v_furniture
+        v_kk_song = self.profile.v_kk_song
+
+        # 1. Zero the model block (0..v_id).  Leaves exists byte at 0 too.
+        self._check_offset(base, v_id)
+        self.data[base : base + v_id] = b"\x00" * v_id
+
+        # 2. v_id and v_id2.
+        self.write_u16(base + v_id, npc_id)
+        if v_id2 >= 0:
+            self.write_u16(base + v_id2, npc_id)
+
+        # 3. Names array.  Empirical mapping (verified against multiple
+        #    villagers in real ACCF saves):
+        #      save_name[0..6] = pack_name[1..7]    (drops pack's ja name)
+        #      save_name[7]    = pack_catch[0]      (reused for ja catchphrase,
+        #                                            truncated to 18 bytes)
+        #    The 8 save name slots are 18 bytes each; pack catchphrase[0]
+        #    is 22 bytes and gets truncated to the first 18.  Real save
+        #    data shows the Japanese catchphrases used here are short
+        #    enough to fit (4 chars × 2 bytes + zero padding).
+        self._check_offset(base + self._VOFF_NAMES_BASE, self._VOFF_NAMES_SIZE)
+        # Copy pack names [1..7] (7 × 18 = 126 bytes) to save [0..6]
+        names_src = pack_entry[
+            self._PACK_OFF_NAMES + 18 : self._PACK_OFF_NAMES + 18 * 8
+        ]
+        self.data[
+            base + self._VOFF_NAMES_BASE :
+            base + self._VOFF_NAMES_BASE + 18 * 7
+        ] = names_src
+        # Copy pack catchphrase[0] (first 18 of 22 bytes) to save name[7]
+        ja_catch = pack_entry[
+            self._PACK_OFF_CATCH : self._PACK_OFF_CATCH + 18
+        ]
+        self.data[
+            base + self._VOFF_NAMES_BASE + 18 * 7 :
+            base + self._VOFF_NAMES_BASE + 18 * 8
+        ] = ja_catch
+
+        # 4. Catchphrase array.  Same shift pattern:
+        #      save_catch[0..8] = pack_catch[1..9]  (drops pack's ja catch)
+        #      save_catch[9]    = (unused / game state) — zeroed
+        self._check_offset(base + self._VOFF_CATCH_BASE, self._VOFF_CATCH_SIZE)
+        catch_src = pack_entry[
+            self._PACK_OFF_CATCH + 22 : self._PACK_OFF_CATCH + 22 * 10
+        ]
+        self.data[
+            base + self._VOFF_CATCH_BASE :
+            base + self._VOFF_CATCH_BASE + 22 * 9
+        ] = catch_src
+        # Zero the 10th catchphrase slot (no pack equivalent)
+        self.data[
+            base + self._VOFF_CATCH_BASE + 22 * 9 :
+            base + self._VOFF_CATCH_BASE + 22 * 10
+        ] = b"\x00" * 22
+
+        # 5. Default outfit.  Note: pack "floor" -> save "carpet",
+        #    pack "wall" -> save "wallpaper".  Furniture is 11 × u16 = 22 bytes.
+        if v_shirt >= 0:
+            self.data[base + v_shirt : base + v_shirt + 2] = (
+                pack_entry[self._PACK_OFF_SHIRT : self._PACK_OFF_SHIRT + 2]
+            )
+        if v_carpet >= 0:
+            self.data[base + v_carpet : base + v_carpet + 2] = (
+                pack_entry[self._PACK_OFF_FLOOR : self._PACK_OFF_FLOOR + 2]
+            )
+        if v_wallpaper >= 0:
+            self.data[base + v_wallpaper : base + v_wallpaper + 2] = (
+                pack_entry[self._PACK_OFF_WALL : self._PACK_OFF_WALL + 2]
+            )
+        if v_umbrella >= 0:
+            self.data[base + v_umbrella : base + v_umbrella + 2] = (
+                pack_entry[self._PACK_OFF_UMBRELLA : self._PACK_OFF_UMBRELLA + 2]
+            )
+        if v_furniture >= 0:
+            self.data[base + v_furniture : base + v_furniture + 22] = (
+                pack_entry[self._PACK_OFF_FURNITURE : self._PACK_OFF_FURNITURE + 22]
+            )
+        if v_kk_song >= 0:
+            self.data[base + v_kk_song : base + v_kk_song + 2] = (
+                pack_entry[self._PACK_OFF_KK_SONG : self._PACK_OFF_KK_SONG + 2]
+            )
+
+        # 6. Personality (high nibble of pack +0x196).
+        pers_id = (pack_entry[self._PACK_OFF_PERS_FURN] >> 4) & 0xF
+        if 0 <= pers_id <= 5:
+            self.write_u8(base + v_pers, pers_id)
+
+        self.modified = True
+
     def get_villager_personality(self, slot: int) -> int:
         """Read the in-save personality byte for a villager slot (0-5)."""
         base = self._villager_offset(slot)
