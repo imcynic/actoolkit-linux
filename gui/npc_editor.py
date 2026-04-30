@@ -272,6 +272,13 @@ class NpcEditorDialog(QDialog):
         # because v_id alone doesn't determine what the game displays.
         self._pending_replace: dict[int, object] = {}
 
+        # Snapshot of original resident ids for visual change tracking.
+        # Slots whose id differs from this baseline get a "*" indicator
+        # in the resident table and contribute to the Apply button's
+        # pending-change count, so the user has obvious feedback that
+        # their Replace clicks actually registered.
+        self._original_resident_ids: list[int] = list(self.resident_ids)
+
         self._current_slot = -1
 
         self._build_ui()
@@ -470,23 +477,50 @@ class NpcEditorDialog(QDialog):
         # --- Bottom buttons ---
         bottom = QHBoxLayout()
         bottom.addStretch()
-        btn_apply = QPushButton("Apply")
-        btn_apply.setMinimumWidth(90)
-        btn_apply.clicked.connect(self._on_apply)
+        self.btn_apply = QPushButton("Apply")
+        self.btn_apply.setMinimumWidth(140)
+        self.btn_apply.clicked.connect(self._on_apply)
         btn_cancel = QPushButton("Cancel")
         btn_cancel.setMinimumWidth(90)
         btn_cancel.clicked.connect(self.reject)
-        bottom.addWidget(btn_apply)
+        bottom.addWidget(self.btn_apply)
         bottom.addWidget(btn_cancel)
         root.addLayout(bottom)
 
         # Status
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("padding: 4px; color: #666;")
+        self.status_label.setStyleSheet(
+            "padding: 6px; font-weight: bold; color: #1a5;"
+        )
         root.addWidget(self.status_label)
 
         # Disable editing widgets initially
         self._set_edit_enabled(False)
+        self._update_apply_button()
+
+    def _pending_change_count(self) -> int:
+        """Return the number of resident slots whose ID differs from
+        what's in the loaded save."""
+        if len(self._original_resident_ids) != len(self.resident_ids):
+            return 0
+        return sum(
+            1 for orig, curr in zip(self._original_resident_ids, self.resident_ids)
+            if orig != curr
+        )
+
+    def _update_apply_button(self):
+        """Reflect pending-change count in the Apply button label and
+        window title so the user has obvious feedback that their
+        Replace/Clear actions registered."""
+        n = self._pending_change_count()
+        if n == 0:
+            self.btn_apply.setText("Apply")
+            self.btn_apply.setStyleSheet("")
+            self.setWindowTitle("Villager Editor")
+        else:
+            self.btn_apply.setText(f"Apply ({n} pending)")
+            self.btn_apply.setStyleSheet("font-weight: bold;")
+            self.setWindowTitle(f"Villager Editor — {n} unsaved change{'s' if n != 1 else ''}")
 
     def _set_edit_enabled(self, enabled: bool):
         """Enable or disable all editable widgets."""
@@ -510,8 +544,15 @@ class NpcEditorDialog(QDialog):
             npc_id = self.resident_ids[slot]
             entry = self._get_npc_entry(npc_id)
 
-            # Slot number
-            slot_item = QTableWidgetItem(str(slot))
+            # Slot number — prefix with "*" if this slot has a pending
+            # change vs. what's currently in the save, so users have an
+            # at-a-glance indicator that their Replace clicked through.
+            changed = (
+                slot < len(self._original_resident_ids)
+                and self._original_resident_ids[slot] != npc_id
+            )
+            slot_label = f"* {slot}" if changed else str(slot)
+            slot_item = QTableWidgetItem(slot_label)
             slot_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.resident_table.setItem(slot, 0, slot_item)
 
@@ -841,7 +882,11 @@ class NpcEditorDialog(QDialog):
         self._populate_residents()
         self.resident_table.setCurrentCell(row, 0)
         self._show_details(entry, new_id, row)
-        self.status_label.setText(f"Slot {row}: replaced with {name} (ID {new_id})")
+        self._update_apply_button()
+        self.status_label.setText(
+            f"✓ Slot {row}: replaced with {name} (ID {new_id}) — "
+            f"click Apply to commit, then File ▸ Save (Ctrl+S)"
+        )
 
     def _on_clear_slot(self):
         row = self.resident_table.currentRow()
@@ -855,7 +900,8 @@ class NpcEditorDialog(QDialog):
         self._populate_residents()
         self.resident_table.setCurrentCell(row, 0)
         self._show_details(None, EMPTY_NPC_ID, row)
-        self.status_label.setText(f"Slot {row}: cleared")
+        self._update_apply_button()
+        self.status_label.setText(f"✓ Slot {row}: cleared")
 
     def _on_load_pack(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -880,6 +926,7 @@ class NpcEditorDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to load pack.bin:\n{e}")
 
     def _on_apply(self):
+        change_count = self._pending_change_count()
         try:
             # First, write any pending template replacements.  This zeros
             # the model block, writes v_id/v_id2, and copies all 8 names
@@ -916,6 +963,23 @@ class NpcEditorDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to write villager data:\n{e}")
             return
+
+        # Confirmation dialog reminding the user to actually save the
+        # file — Apply only updates the in-memory save; the changes
+        # aren't persisted to disk until File ▸ Save.  Skipping this
+        # final step was the most common source of "I changed villagers
+        # but the game didn't change them" reports.
+        if change_count > 0:
+            QMessageBox.information(
+                self,
+                "Villager changes applied",
+                f"Applied {change_count} villager change"
+                f"{'s' if change_count != 1 else ''} to the in-memory save.\n\n"
+                f"⚠ These are NOT yet written to disk.\n"
+                f"Use File ▸ Save (Ctrl+S) in the main window to save the file.\n\n"
+                f"After loading the save in your game, the new villagers will\n"
+                f"arrive in the 'moving in' state (boxes in their houses)."
+            )
         self.accept()
 
     # ------------------------------------------------------------------

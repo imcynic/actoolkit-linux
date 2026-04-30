@@ -813,7 +813,13 @@ class MainWindow(QMainWindow):
             self.save_handler.save()
             self._update_title_bar()
             self._update_status_bar()
-            self.status_bar.showMessage("File saved successfully.", 3000)
+            # Longer status-bar dwell + bold styling so the success is
+            # actually noticeable; the previous 3-second toast was easy
+            # to miss and led users to wonder if Save did anything.
+            path = self.save_handler.filepath
+            self.status_bar.showMessage(
+                f"✓ Saved to {path}", 8000
+            )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
 
