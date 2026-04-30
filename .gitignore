@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Auto-backups created when a save is opened in the editor
+backups/

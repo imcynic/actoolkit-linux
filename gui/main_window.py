@@ -6,6 +6,8 @@ including player stats, town settings, catalog, and Nook's shop configuration.
 
 from __future__ import annotations
 
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -725,6 +727,67 @@ class MainWindow(QMainWindow):
     # File actions
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Auto-backup on load
+    # ------------------------------------------------------------------
+
+    def _editor_backup_dir(self) -> Path:
+        """Return the directory where load-time backups are stored.
+
+        Resolves to ``<editor root>/backups`` — i.e. the parent of the
+        ``gui`` package, which is the project root regardless of where
+        the user invoked the script from.
+        """
+        return Path(__file__).resolve().parent.parent / "backups"
+
+    def _create_load_backup(self, src_path: str) -> Optional[Path]:
+        """Copy a freshly-opened save into the editor's ``backups/`` dir.
+
+        Best-effort: any error (missing source, unwritable backup dir,
+        no disk space, permissions) is reported via the status bar and
+        otherwise swallowed — the load itself must not be blocked by
+        a backup failure.
+
+        Naming: ``<original-stem>-<YYYYMMDD-HHMMSS><suffix>``.  If the
+        same file is opened multiple times within the same second a
+        ``-N`` collision suffix is appended.
+
+        Returns the backup path on success, ``None`` on any failure.
+        """
+        try:
+            src = Path(src_path)
+            if not src.is_file():
+                return None
+            backup_dir = self._editor_backup_dir()
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            stem = src.stem or "save"
+            suffix = src.suffix
+            dest = backup_dir / f"{stem}-{ts}{suffix}"
+            collision = 1
+            while dest.exists():
+                dest = backup_dir / f"{stem}-{ts}-{collision}{suffix}"
+                collision += 1
+                if collision > 999:
+                    # Pathological case — bail rather than spin forever
+                    raise RuntimeError("could not find a free backup filename")
+            shutil.copy2(src, dest)
+            try:
+                self.status_bar.showMessage(
+                    f"Backup created: {dest.name}", 6000
+                )
+            except Exception:
+                pass
+            return dest
+        except Exception as e:
+            try:
+                self.status_bar.showMessage(
+                    f"Auto-backup failed (load continues): {e}", 8000
+                )
+            except Exception:
+                pass
+            return None
+
     @pyqtSlot()
     def _on_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -743,6 +806,13 @@ class MainWindow(QMainWindow):
         if not self.save_handler.open(path):
             QMessageBox.critical(self, "Error", f"Failed to open:\n{path}")
             return
+
+        # Auto-backup the save to backups/ in the editor directory.
+        # Best-effort: any failure (read-only fs, no space, etc.) is
+        # logged to the status bar and otherwise ignored — we never
+        # block the user from opening the file because the backup
+        # couldn't be written.
+        self._create_load_backup(path)
 
         # Detect Deluxe save early (before CRC warning, so we can contextualise)
         self._is_deluxe = False
