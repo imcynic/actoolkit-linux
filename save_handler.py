@@ -1923,29 +1923,16 @@ class SaveHandler:
                 if v_id2 >= 0:
                     self.write_u16(base + v_id2, 0)
             else:
-                # ACCF villager replace: ALWAYS zero the per-slot
-                # model/init block (everything before v_id) and leave the
-                # exists byte at 0 — the "moving in" state.  The empirical
-                # working pattern observed in real saves is:
-                #   exists = 0x00, model block = all zeros, v_id = new id.
-                # On next load the game re-initializes the villager from
-                # v_id and re-populates the model block itself.
-                #
-                # This is unconditional (not gated on existing_id != npc_id)
-                # because saves previously written by a buggy editor can
-                # have a stale model block whose v_id matches the new id —
-                # in that case the model is wrong but the id check would
-                # incorrectly skip the reset, leaving the game rendering
-                # the old villager forever.
-                #
-                # All editable per-villager fields (personality, catchphrase,
-                # shirt, furniture, wallpaper, carpet, umbrella, kk_song)
-                # live AFTER v_id (offsets 0x1826+), so they are not
-                # affected by zeroing 0x00..v_id.
-                if v_id > 0:
-                    self._check_offset(base, v_id)
-                    self.data[base : base + v_id] = b"\x00" * v_id
-                    self.modified = True
+                # ACCF: set exists + write both ID fields.  Do NOT touch
+                # the per-slot model block at +0x00..+0x1824 — zeroing it
+                # destroys the bres model/animation data the game uses to
+                # render the villager and produces a visibly glitched
+                # (TV-static) face on load.  The game does NOT regenerate
+                # the bres data from v_id alone, so leaving the existing
+                # model bytes is the only safe choice short of providing
+                # a complete replacement model (which is not available
+                # from pack.bin or any other in-tree source).
+                self.write_u8(base + v_exists, 0x10)
                 self.write_u16(base + v_id, npc_id)
                 if v_id2 >= 0:
                     self.write_u16(base + v_id2, npc_id)
@@ -1988,23 +1975,27 @@ class SaveHandler:
     _VOFF_CATCH_SIZE   = 10 * 22
 
     def write_villager_template(self, slot: int, npc_id: int, pack_entry: bytes) -> None:
-        """Write a complete villager template (names/catchphrases/outfit) to a slot.
+        """Write villager identity (names/catchphrases/outfit) to a slot.
 
-        Intended for ACCF only.  The 408-byte pack.bin entry is the
-        authoritative source for identity data the game uses to render
-        the villager.  This method:
+        Intended for ACCF only.  This method:
 
-          1. Zeros the slot's model block (0x00..v_id) so the game
-             re-initializes graphics from v_id on next load.
-          2. Writes v_id and v_id2 (both copies the game maintains).
-          3. Copies the 8-language name array (144 bytes) to +0x1858.
-          4. Copies the 10-language catchphrase array (220 bytes) to +0x18EC.
-          5. Writes default outfit (shirt, floor, wall, umbrella,
+          1. Writes v_id and v_id2.
+          2. Copies the 8-language name array to +0x1858 (with the
+             save-vs-pack lang shift documented below).
+          3. Copies the 10-language catchphrase array to +0x18EC.
+          4. Writes default outfit (shirt, floor, wall, umbrella,
              furniture, kk_song) from the pack entry.
-          6. Writes the personality nibble from the pack entry to +0x230A.
+          5. Writes the personality nibble from the pack entry to +0x230A.
 
-        The exists byte stays 0 (zeroed by step 1) — the "moving in"
-        state — so the game rebuilds the slot fully on next load.
+        The per-slot model block (0x00..v_id) is intentionally LEFT
+        UNTOUCHED.  Zeroing it destroys the bres render data the game
+        uses to draw the villager, producing a glitched face on load,
+        and the game does not regenerate it from v_id.  As a result
+        the rendered character may continue to look like the previous
+        resident even when the new villager's name and catchphrase
+        appear correctly in dialogue.  This is a documented limitation
+        of the editor — fully swapping a villager's appearance requires
+        the game's natural move-out/move-in flow.
 
         Args:
             slot: Villager slot index (0-9 for ACCF).
@@ -2032,6 +2023,7 @@ class SaveHandler:
 
         v_id = self.profile.v_id          # 0x1824
         v_id2 = self.profile.v_id2        # 0x2308
+        v_exists = self.profile.v_exists  # 0x0000
         v_pers = self.profile.v_personality  # 0x230A
         v_shirt = self.profile.v_shirt
         v_carpet = self.profile.v_carpet
@@ -2040,11 +2032,8 @@ class SaveHandler:
         v_furniture = self.profile.v_furniture
         v_kk_song = self.profile.v_kk_song
 
-        # 1. Zero the model block (0..v_id).  Leaves exists byte at 0 too.
-        self._check_offset(base, v_id)
-        self.data[base : base + v_id] = b"\x00" * v_id
-
-        # 2. v_id and v_id2.
+        # 1. exists + v_id + v_id2.  Leave the model block alone.
+        self.write_u8(base + v_exists, 0x10)
         self.write_u16(base + v_id, npc_id)
         if v_id2 >= 0:
             self.write_u16(base + v_id2, npc_id)
