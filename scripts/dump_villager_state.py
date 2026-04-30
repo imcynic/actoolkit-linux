@@ -35,10 +35,12 @@ SPECIES = {
 
 
 def utf16_be(data: bytes) -> str:
-    try:
-        return data.decode("utf-16-be").rstrip("\x00")
-    except UnicodeDecodeError:
-        return f"<bytes:{data.hex()}>"
+    # `errors="replace"` keeps the dump output legible even when a slot
+    # contains corrupt or truncated UTF-16 data (lone surrogates, odd
+    # lengths after slicing past EOF, etc.).
+    if len(data) % 2:
+        return f"<odd-len:{data.hex()}>"
+    return data.decode("utf-16-be", errors="replace").rstrip("\x00")
 
 
 def dump_slot(data: bytes, slot: int, pack: bytes | None) -> None:
@@ -105,7 +107,23 @@ def main() -> int:
         return 1
 
     data = save_path.read_bytes()
+    min_size = VILLAGER_START + VILLAGER_COUNT * VILLAGER_STRIDE
+    if len(data) < min_size:
+        print(
+            f"save file too small: {len(data)} bytes (need at least "
+            f"{min_size} = 0x{min_size:X} for {VILLAGER_COUNT} ACCF "
+            f"villager slots).  Is this an ACCF RVFOREST.DAT?",
+            file=sys.stderr,
+        )
+        return 1
     pack = pack_path.read_bytes() if pack_path else None
+    if pack is not None and len(pack) < 32 + 408:
+        print(
+            f"pack.bin too small: {len(pack)} bytes (need >= 440 for "
+            f"the header + at least one entry).",
+            file=sys.stderr,
+        )
+        return 1
 
     print(f"=== {save_path} ({len(data)} bytes) ===")
     for slot in range(VILLAGER_COUNT):
