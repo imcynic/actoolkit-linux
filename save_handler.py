@@ -2050,8 +2050,22 @@ class SaveHandler:
         v_furniture = self.profile.v_furniture
         v_kk_song = self.profile.v_kk_song
 
-        # 1. exists + v_id + v_id2.  Leave the model block alone.
-        self.write_u8(base + v_exists, 0x10)
+        # 1. exists + v_id + v_id2.  Set exists=0 ("moving in" state)
+        #    rather than 0x10 (settled).  In a clean save, naturally-
+        #    moving-in villagers (e.g. slot 6 just after a real game
+        #    move-in event) have exists=0 plus a populated v_id, and
+        #    the game regenerates the bres model block from v_id on
+        #    next load.  With exists=0x10 (settled) the game uses the
+        #    stale bres data, causing the rendered character to look
+        #    like the previous resident even when every other identity
+        #    field has been updated.  Leaving the bres block intact
+        #    here (rather than zeroing it) avoids the "TV-static face"
+        #    glitch we saw when we tried zeroing it: that glitch was
+        #    caused by the combination exists=0x10 + zero bres, which
+        #    told the game "use this initialized model" but the model
+        #    was empty.  exists=0 + intact bres should let the game
+        #    discard the cached bres and rebuild it cleanly.
+        self.write_u8(base + v_exists, 0)
         self.write_u16(base + v_id, npc_id)
         if v_id2 >= 0:
             self.write_u16(base + v_id2, npc_id)
