@@ -1966,13 +1966,20 @@ class SaveHandler:
     _PACK_OFF_KK_SONG   = 0x20   # u16
     _PACK_OFF_NAMES     = 0x22   # 8 × 18 bytes UTF-16 BE
     _PACK_OFF_CATCH     = 0xB2   # 10 × 22 bytes UTF-16 BE
+    _PACK_OFF_TAIL      = 0x18E  # 10 bytes: species, birth_m, birth_d,
+                                 # fav_cloth, least_cloth, fav_color,
+                                 # fav_series, pad, pers/furn, starter
+    _PACK_OFF_TAIL_SIZE = 10
     _PACK_OFF_PERS_FURN = 0x196  # high nibble = personality
 
     # Offsets within the ACCF save villager slot.
     _VOFF_NAMES_BASE   = 0x1858  # 8 × 18 bytes
     _VOFF_NAMES_SIZE   = 8 * 18
-    _VOFF_CATCH_BASE   = 0x18EC  # 10 × 22 bytes
-    _VOFF_CATCH_SIZE   = 10 * 22
+    _VOFF_CATCH_BASE   = 0x18EC  # 9 × 22 bytes (NOT 10 — see _VOFF_TAIL)
+    _VOFF_CATCH_SIZE   = 9 * 22  # only 9 catchphrase slots are real
+    _VOFF_TAIL_BASE    = 0x19B2  # species, birth, favorites, pers, starter
+                                 # (10 bytes from pack.bin +0x18E..+0x197)
+    _VOFF_TAIL_SIZE    = 10
 
     def write_villager_template(self, slot: int, npc_id: int, pack_entry: bytes) -> None:
         """Write villager identity (names/catchphrases/outfit) to a slot.
@@ -2065,22 +2072,37 @@ class SaveHandler:
             base + self._VOFF_NAMES_BASE + 18 * 8
         ] = ja_catch
 
-        # 4. Catchphrase array.  Same shift pattern:
-        #      save_catch[0..8] = pack_catch[1..9]  (drops pack's ja catch)
-        #      save_catch[9]    = (unused / game state) — zeroed
+        # 4. Catchphrase array — 9 entries × 22 bytes copied with the
+        #    save-vs-pack lang shift (drops pack's ja catchphrase).
+        #    There are exactly 9 catchphrase slots in the save, NOT 10:
+        #    the 22 bytes immediately after them (+0x19B2..+0x19BB) are
+        #    villager metadata (species, birthday, favorites, personality
+        #    nibble, starter flag), NOT another catchphrase.  An earlier
+        #    version of this code zeroed those bytes thinking they were
+        #    a 10th catchphrase, which set species_id to 0 (Cat) and
+        #    caused every replaced villager to render as a cat in-game.
         self._check_offset(base + self._VOFF_CATCH_BASE, self._VOFF_CATCH_SIZE)
         catch_src = pack_entry[
             self._PACK_OFF_CATCH + 22 : self._PACK_OFF_CATCH + 22 * 10
         ]
         self.data[
             base + self._VOFF_CATCH_BASE :
-            base + self._VOFF_CATCH_BASE + 22 * 9
+            base + self._VOFF_CATCH_BASE + self._VOFF_CATCH_SIZE
         ] = catch_src
-        # Zero the 10th catchphrase slot (no pack equivalent)
+
+        # 4b. Villager metadata tail (species, birthday, favorites,
+        #     personality nibble, starter flag) — copied verbatim from
+        #     pack.bin +0x18E..+0x197 to save +0x19B2..+0x19BB.  Without
+        #     these the game has no way to render the new villager
+        #     (zero species → cat fallback).
+        self._check_offset(base + self._VOFF_TAIL_BASE, self._VOFF_TAIL_SIZE)
+        tail_src = pack_entry[
+            self._PACK_OFF_TAIL : self._PACK_OFF_TAIL + self._VOFF_TAIL_SIZE
+        ]
         self.data[
-            base + self._VOFF_CATCH_BASE + 22 * 9 :
-            base + self._VOFF_CATCH_BASE + 22 * 10
-        ] = b"\x00" * 22
+            base + self._VOFF_TAIL_BASE :
+            base + self._VOFF_TAIL_BASE + self._VOFF_TAIL_SIZE
+        ] = tail_src
 
         # 5. Default outfit.  Note: pack "floor" -> save "carpet",
         #    pack "wall" -> save "wallpaper".  Furniture is 11 × u16 = 22 bytes.
