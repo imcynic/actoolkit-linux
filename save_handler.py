@@ -1973,13 +1973,24 @@ class SaveHandler:
     _PACK_OFF_PERS_FURN = 0x196  # high nibble = personality
 
     # Offsets within the ACCF save villager slot.
-    _VOFF_NAMES_BASE   = 0x1858  # 8 × 18 bytes
+    _VOFF_NAMES_BASE   = 0x1858  # primary: 8 × 18 bytes (shifted layout —
+                                 # save[0]=en_us, save[7]=ja_catch fragment)
     _VOFF_NAMES_SIZE   = 8 * 18
     _VOFF_CATCH_BASE   = 0x18EC  # 9 × 22 bytes (NOT 10 — see _VOFF_TAIL)
     _VOFF_CATCH_SIZE   = 9 * 22  # only 9 catchphrase slots are real
     _VOFF_TAIL_BASE    = 0x19B2  # species, birth, favorites, pers, starter
                                  # (10 bytes from pack.bin +0x18E..+0x197)
     _VOFF_TAIL_SIZE    = 10
+    _VOFF_NAMES2_BASE  = 0x2278  # secondary: 8 × 18 bytes verbatim from
+                                 # pack (no shift — save[0]=ja, etc.).
+                                 # Confirmed against a clean save: slot 6
+                                 # (Puck, never edited) matches pack.bin's
+                                 # Puck name array byte-for-byte here.
+                                 # Game reads display name from THIS array,
+                                 # not the primary one — replacing without
+                                 # writing this leaves the old name showing
+                                 # in the map list and dialogue.
+    _VOFF_NAMES2_SIZE  = 8 * 18  # ends exactly at v_id2 (0x2308)
 
     def write_villager_template(self, slot: int, npc_id: int, pack_entry: bytes) -> None:
         """Write villager identity (names/catchphrases/outfit) to a slot.
@@ -2103,6 +2114,21 @@ class SaveHandler:
             base + self._VOFF_TAIL_BASE :
             base + self._VOFF_TAIL_BASE + self._VOFF_TAIL_SIZE
         ] = tail_src
+
+        # 5. Secondary name array — 8 × 18 bytes copied VERBATIM from
+        #    pack.bin's name section to save +0x2278..+0x2308.  This is
+        #    the array the game uses for the villager's display name
+        #    in the map menu, dialogue, and on-screen interactions.
+        #    Skipping it leaves the previous resident's name showing
+        #    in-game even though every other field has been updated.
+        self._check_offset(base + self._VOFF_NAMES2_BASE, self._VOFF_NAMES2_SIZE)
+        names2_src = pack_entry[
+            self._PACK_OFF_NAMES : self._PACK_OFF_NAMES + self._VOFF_NAMES2_SIZE
+        ]
+        self.data[
+            base + self._VOFF_NAMES2_BASE :
+            base + self._VOFF_NAMES2_BASE + self._VOFF_NAMES2_SIZE
+        ] = names2_src
 
         # 5. Default outfit.  Note: pack "floor" -> save "carpet",
         #    pack "wall" -> save "wallpaper".  Furniture is 11 × u16 = 22 bytes.
